@@ -17,7 +17,7 @@
 #define SCREEN_HEIGHT 240
 
 // LVGL Refresh time
-static const uint32_t screenTickPeriod = 5;
+static const uint32_t screenTickPeriod = 10;  // Increased to 10ms for better stability
 static uint32_t lastLvglTick = 0;
 
 // LED Array
@@ -32,16 +32,23 @@ static lv_style_t style_background;
 // Display buffer
 static lv_disp_draw_buf_t draw_buf;
 static lv_color_t buf1[SCREEN_WIDTH * 10];
-static lv_color_t buf2[SCREEN_WIDTH * 10];
 
 // Display driver
 static lv_disp_drv_t disp_drv;
 
+// Temperature unit
+bool isCelsius = true;
+
 float readObjectTemperature() {
     Wire.beginTransmission(0x5A);
     Wire.write(0x07);
-    Wire.endTransmission(false);
-    Wire.requestFrom(0x5A, 2);
+    if(Wire.endTransmission(false) != 0) {
+        return -999.0;
+    }
+    
+    if(Wire.requestFrom(0x5A, 2) != 2) {
+        return -999.0;
+    }
     
     if (Wire.available() == 2) {
         uint16_t object_raw = (Wire.read() | (Wire.read() << 8));
@@ -63,17 +70,17 @@ void my_disp_flush(lv_disp_drv_t *disp, const lv_area_t *area, lv_color_t *color
 }
 
 void setup() {
-    // Initialize M5Stack
-    auto cfg = M5.config();
-    cfg.clear_display = true;    // Clear display on boot
-    cfg.output_power  = true;    // Turn on USB power output
-    cfg.internal_imu  = false;   // Disable IMU to save resources
-    cfg.internal_rtc  = false;   // Disable RTC to save resources
-    M5.begin(cfg);
-    
-    // Initialize Serial with higher baud rate
     Serial.begin(115200);
+    delay(100); // Short delay for serial stability
     Serial.println("Starting setup...");
+
+    // Initialize M5Stack with specific config
+    auto cfg = M5.config();
+    cfg.clear_display = true;
+    cfg.output_power = true;
+    cfg.internal_imu = false;
+    cfg.internal_rtc = false;
+    M5.begin(cfg);
     
     // Initialize I2C
     Wire.begin(2, 1);
@@ -89,11 +96,9 @@ void setup() {
     
     // Initialize LVGL
     lv_init();
-    Serial.println("LVGL initialized");
     
-    // Initialize display buffer with double buffering
-    lv_disp_draw_buf_init(&draw_buf, buf1, buf2, SCREEN_WIDTH * 10);
-    Serial.println("Display buffer initialized");
+    // Initialize display buffer (single buffer for 8.4.0)
+    lv_disp_draw_buf_init(&draw_buf, buf1, NULL, SCREEN_WIDTH * 10);
     
     // Initialize display driver
     lv_disp_drv_init(&disp_drv);
@@ -102,44 +107,28 @@ void setup() {
     disp_drv.flush_cb = my_disp_flush;
     disp_drv.draw_buf = &draw_buf;
     lv_disp_drv_register(&disp_drv);
-    Serial.println("Display driver registered");
     
     // Create styles
     lv_style_init(&style_text);
     lv_style_set_text_font(&style_text, &lv_font_montserrat_24);
-    lv_style_set_text_color(&style_text, lv_color_make(255, 255, 255));
+    lv_style_set_text_color(&style_text, lv_palette_main(LV_PALETTE_LIGHT_BLUE));
     
     lv_style_init(&style_background);
-    lv_style_set_bg_color(&style_background, lv_color_make(0, 0, 50));
+    lv_style_set_bg_color(&style_background, lv_color_black());
     
     // Create main container
     lv_obj_t *main_container = lv_obj_create(lv_scr_act());
-    if (!main_container) {
-        Serial.println("Failed to create main container!");
-        return;
-    }
-    
     lv_obj_set_size(main_container, SCREEN_WIDTH, SCREEN_HEIGHT);
     lv_obj_add_style(main_container, &style_background, 0);
     
     // Create temperature label
     temp_label = lv_label_create(main_container);
-    if (!temp_label) {
-        Serial.println("Failed to create temp label!");
-        return;
-    }
-    
     lv_label_set_text(temp_label, "Temperature:");
     lv_obj_add_style(temp_label, &style_text, 0);
     lv_obj_align(temp_label, LV_ALIGN_TOP_MID, 0, 40);
     
     // Create temperature value label
     temp_value_label = lv_label_create(main_container);
-    if (!temp_value_label) {
-        Serial.println("Failed to create temp value label!");
-        return;
-    }
-    
     lv_label_set_text(temp_value_label, "Reading...");
     lv_obj_add_style(temp_value_label, &style_text, 0);
     lv_obj_align(temp_value_label, LV_ALIGN_CENTER, 0, 20);
@@ -153,10 +142,10 @@ void setup() {
     pinMode(BUTTON2_PIN, INPUT_PULLUP);
     pinMode(KEY_PIN, INPUT_PULLUP);
     
-    Serial.println("Setup completed successfully!");
+    Serial.println("Setup completed!");
     lastLvglTick = millis();
     
-    // Set initial LED color
+    // Initial LED color
     leds[0] = CRGB::Green;
     FastLED.show();
 }
@@ -171,20 +160,32 @@ void loop() {
         lastLvglTick = currentMillis;
     }
     
-    // Read and update temperature every second
+    // Check button press to toggle temperature unit
+    static bool lastButtonState = HIGH;
+    bool buttonState = digitalRead(BUTTON1_PIN);
+    if (buttonState == LOW && lastButtonState == HIGH) {
+        isCelsius = !isCelsius;
+    }
+    lastButtonState = buttonState;
+    
+    // Update temperature every second
     static uint32_t lastTempUpdate = 0;
     if (currentMillis - lastTempUpdate > 1000) {
         float objectTemp = readObjectTemperature();
         
         if (objectTemp > -273.15) {
+            if (!isCelsius) {
+                objectTemp = objectTemp * 9.0 / 5.0 + 32.0; // Convert to Fahrenheit
+            }
+            
             char tempStr[32];
-            snprintf(tempStr, sizeof(tempStr), "%.1f°C", objectTemp);
+            snprintf(tempStr, sizeof(tempStr), "%.1f°%c", objectTemp, isCelsius ? 'C' : 'F');
             lv_label_set_text(temp_value_label, tempStr);
             
             // Update LED color based on temperature
-            if (objectTemp > 37.5) {
+            if (objectTemp > (isCelsius ? 37.5 : 99.5)) {
                 leds[0] = CRGB::Red;
-            } else if (objectTemp > 35.0) {
+            } else if (objectTemp > (isCelsius ? 35.0 : 95.0)) {
                 leds[0] = CRGB::Green;
             } else {
                 leds[0] = CRGB::Blue;
@@ -194,6 +195,5 @@ void loop() {
         lastTempUpdate = currentMillis;
     }
     
-    // Small delay to prevent watchdog timer issues
     delay(5);
 }

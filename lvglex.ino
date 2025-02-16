@@ -16,9 +16,30 @@
 #define SCREEN_WIDTH 320
 #define SCREEN_HEIGHT 240
 
+// Temperature ranges
+#define TEMP_MIN_C 149
+#define TEMP_MAX_C 396
+#define TEMP_MIN_F 300
+#define TEMP_MAX_F 745
+
+// Temperature ranges for dabs (in Fahrenheit)
+#define TEMP_TOO_COLD_F 400    // Below this is too cold
+#define TEMP_LOW_F      450    // Low end of good range
+#define TEMP_HIGH_F     600    // High end of good range
+#define TEMP_TOO_HOT_F  650    // Above this is too hot
+
+// Temperature ranges for dabs (in Celsius)
+#define TEMP_TOO_COLD_C 204    // Below this is too cold
+#define TEMP_LOW_C      232    // Low end of good range
+#define TEMP_HIGH_C     316    // High end of good range
+#define TEMP_TOO_HOT_C  343    // Above this is too hot
+
 // LVGL Refresh time
 static const uint32_t screenTickPeriod = 10;  // Increased to 10ms for better stability
 static uint32_t lastLvglTick = 0;
+
+// Update intervals
+#define TEMP_UPDATE_INTERVAL 100  // Update temperature every 100ms for more responsive readings
 
 // LED Array
 CRGB leds[NUM_LEDS];
@@ -26,8 +47,16 @@ CRGB leds[NUM_LEDS];
 // Display and LVGL objects
 static lv_obj_t *temp_label;
 static lv_obj_t *temp_value_label;
+static lv_obj_t *status_label;
+static lv_obj_t *meter;
+static lv_meter_indicator_t *temp_indic;
+static lv_meter_scale_t *temp_scale;  // Scale needs to be stored
 static lv_style_t style_text;
 static lv_style_t style_background;
+
+// State variables
+static bool showGauge = true;      // Track gauge visibility
+static bool lastKeyState = HIGH;    // Track key state for toggle
 
 // Display buffer
 static lv_disp_draw_buf_t draw_buf;
@@ -121,19 +150,44 @@ void setup() {
     lv_obj_set_size(main_container, SCREEN_WIDTH, SCREEN_HEIGHT);
     lv_obj_add_style(main_container, &style_background, 0);
     
+    // Create meter
+    meter = lv_meter_create(main_container);
+    lv_obj_center(meter);
+    lv_obj_set_size(meter, 200, 200);
+    
+    // Create and configure scale
+    temp_scale = lv_meter_add_scale(meter);
+    lv_meter_set_scale_ticks(meter, temp_scale, 41, 2, 10, lv_palette_main(LV_PALETTE_GREY));
+    lv_meter_set_scale_major_ticks(meter, temp_scale, 8, 4, 15, lv_color_white(), 10);
+    
+    // Set initial scale range
+    if (isCelsius) {
+        lv_meter_set_scale_range(meter, temp_scale, TEMP_MIN_C, TEMP_MAX_C, 270, 135);
+    } else {
+        lv_meter_set_scale_range(meter, temp_scale, TEMP_MIN_F, TEMP_MAX_F, 270, 135);
+    }
+    
+    // Add the temperature indicator (needle)
+    temp_indic = lv_meter_add_needle_line(meter, temp_scale, 5, lv_palette_main(LV_PALETTE_RED), -10);
+    
     // Create temperature label
     temp_label = lv_label_create(main_container);
     lv_label_set_text(temp_label, "Temperature:");
     lv_obj_add_style(temp_label, &style_text, 0);
-    lv_obj_align(temp_label, LV_ALIGN_TOP_MID, 0, 40);
+    lv_obj_align(temp_label, LV_ALIGN_TOP_MID, 0, 10);
     
-    // Create temperature value label
+    // Create temperature value label with larger font
     temp_value_label = lv_label_create(main_container);
     lv_label_set_text(temp_value_label, "Reading...");
     lv_obj_add_style(temp_value_label, &style_text, 0);
-    lv_obj_align(temp_value_label, LV_ALIGN_CENTER, 0, 20);
+    lv_obj_align(temp_value_label, LV_ALIGN_TOP_MID, 0, 40);
     
-    // Initialize FastLED
+    // Create status label
+    status_label = lv_label_create(main_container);
+    lv_label_set_text(status_label, "");
+    lv_obj_align(status_label, LV_ALIGN_BOTTOM_MID, 0, -20);
+    
+    // Initialize LED
     FastLED.addLeds<WS2812, LED_PIN, GRB>(leds, NUM_LEDS);
     FastLED.setBrightness(50);
     
@@ -160,6 +214,18 @@ void loop() {
         lastLvglTick = currentMillis;
     }
     
+    // Check key press to toggle gauge visibility
+    bool keyState = digitalRead(KEY_PIN);
+    if (keyState == LOW && lastKeyState == HIGH) {
+        showGauge = !showGauge;
+        if (showGauge) {
+            lv_obj_clear_flag(meter, LV_OBJ_FLAG_HIDDEN);
+        } else {
+            lv_obj_add_flag(meter, LV_OBJ_FLAG_HIDDEN);
+        }
+    }
+    lastKeyState = keyState;
+    
     // Check button press to toggle temperature unit
     static bool lastButtonState = HIGH;
     bool buttonState = digitalRead(BUTTON1_PIN);
@@ -168,9 +234,9 @@ void loop() {
     }
     lastButtonState = buttonState;
     
-    // Update temperature every second
+    // Update temperature more frequently
     static uint32_t lastTempUpdate = 0;
-    if (currentMillis - lastTempUpdate > 1000) {
+    if (currentMillis - lastTempUpdate > TEMP_UPDATE_INTERVAL) {
         float objectTemp = readObjectTemperature();
         
         if (objectTemp > -273.15) {
@@ -179,16 +245,52 @@ void loop() {
             }
             
             char tempStr[32];
-            snprintf(tempStr, sizeof(tempStr), "%.1f°%c", objectTemp, isCelsius ? 'C' : 'F');
+            snprintf(tempStr, sizeof(tempStr), "%d°%c", (int)round(objectTemp), isCelsius ? 'C' : 'F');
             lv_label_set_text(temp_value_label, tempStr);
             
-            // Update LED color based on temperature
-            if (objectTemp > (isCelsius ? 37.5 : 99.5)) {
-                leds[0] = CRGB::Red;
-            } else if (objectTemp > (isCelsius ? 35.0 : 95.0)) {
-                leds[0] = CRGB::Green;
+            // Update meter value and scale based on temperature unit
+            if (isCelsius) {
+                lv_meter_set_scale_range(meter, temp_scale, TEMP_MIN_C, TEMP_MAX_C, 270, 135);
+                lv_meter_set_indicator_value(meter, temp_indic, objectTemp);
+                
+                // Update status and LED color based on temperature ranges
+                if (objectTemp < TEMP_TOO_COLD_C) {
+                    lv_label_set_text(status_label, "TOO COLD");
+                    leds[0] = CRGB::Blue;
+                } else if (objectTemp < TEMP_LOW_C) {
+                    lv_label_set_text(status_label, "HEATING UP");
+                    leds[0] = CRGB::Yellow;
+                } else if (objectTemp <= TEMP_HIGH_C) {
+                    lv_label_set_text(status_label, "PERFECT!");
+                    leds[0] = CRGB::Green;
+                } else if (objectTemp <= TEMP_TOO_HOT_C) {
+                    lv_label_set_text(status_label, "COOLING DOWN");
+                    leds[0] = CRGB::Orange;
+                } else {
+                    lv_label_set_text(status_label, "TOO HOT!");
+                    leds[0] = CRGB::Red;
+                }
             } else {
-                leds[0] = CRGB::Blue;
+                lv_meter_set_scale_range(meter, temp_scale, TEMP_MIN_F, TEMP_MAX_F, 270, 135);
+                lv_meter_set_indicator_value(meter, temp_indic, objectTemp);
+                
+                // Update status and LED color based on temperature ranges
+                if (objectTemp < TEMP_TOO_COLD_F) {
+                    lv_label_set_text(status_label, "TOO COLD");
+                    leds[0] = CRGB::Blue;
+                } else if (objectTemp < TEMP_LOW_F) {
+                    lv_label_set_text(status_label, "HEATING UP");
+                    leds[0] = CRGB::Yellow;
+                } else if (objectTemp <= TEMP_HIGH_F) {
+                    lv_label_set_text(status_label, "PERFECT!");
+                    leds[0] = CRGB::Green;
+                } else if (objectTemp <= TEMP_TOO_HOT_F) {
+                    lv_label_set_text(status_label, "COOLING DOWN");
+                    leds[0] = CRGB::Orange;
+                } else {
+                    lv_label_set_text(status_label, "TOO HOT!");
+                    leds[0] = CRGB::Red;
+                }
             }
             FastLED.show();
         }

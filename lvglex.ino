@@ -92,6 +92,8 @@ static float current_emissivity = 0.95f;  // Default emissivity
 static lv_obj_t *emissivity_bar = NULL;
 static lv_obj_t *emissivity_label = NULL;
 static bool bar_active = false;
+static bool brightness_menu_active = false;
+static uint8_t selected_brightness = 0;
 
 // Sound settings
 static bool sound_enabled = true;
@@ -134,6 +136,7 @@ static void restart_timer_cb(lv_timer_t *timer);
 static void emissivity_slider_event_cb(lv_event_t *e);
 static void playBeep(int frequency, int duration);
 static void update_battery_status();
+static void show_brightness_settings();
 
 // Function to save settings to EEPROM
 void saveSettings() {
@@ -198,6 +201,120 @@ void loadSettings() {
             lv_obj_add_flag(meter, LV_OBJ_FLAG_HIDDEN);
         }
     }
+}
+
+static lv_obj_t *brightness_dialog = NULL;
+static lv_obj_t *brightness_btnm = NULL;
+static lv_obj_t *brightness_value_label = NULL;
+
+static void update_brightness_display() {
+    if (brightness_value_label != NULL) {
+        char buf[8];
+        snprintf(buf, sizeof(buf), "%d%%", (brightness_values[current_brightness] * 100) / 255);
+        lv_label_set_text(brightness_value_label, buf);
+    }
+    if (brightness_btnm != NULL) {
+        for (uint8_t i = 0; i < BRIGHTNESS_LEVELS; i++) {
+            if (i == selected_brightness) {
+                lv_btnmatrix_set_btn_ctrl(brightness_btnm, i, LV_BTNMATRIX_CTRL_CHECKED);
+            } else {
+                lv_btnmatrix_clear_btn_ctrl(brightness_btnm, i, LV_BTNMATRIX_CTRL_CHECKED);
+            }
+        }
+    }
+}
+
+static void close_brightness_menu() {
+    Serial.println("Closing brightness menu");  // Debug print
+    
+    saveSettings();
+    if (sound_enabled) {
+        playBeep(2500, 50);
+    }
+    
+    // Ensure proper cleanup of all UI elements
+    if (brightness_dialog != NULL) {
+        lv_obj_del(brightness_dialog);
+        brightness_dialog = NULL;
+    }
+    brightness_value_label = NULL;
+    brightness_btnm = NULL;
+    
+    // Reset all menu states
+    menu_active = false;
+    brightness_menu_active = false;
+    
+    // Show main display elements
+    if (showGauge) {
+        lv_obj_clear_flag(meter, LV_OBJ_FLAG_HIDDEN);
+    }
+    lv_obj_clear_flag(temp_label, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_clear_flag(temp_value_label, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_clear_flag(status_label, LV_OBJ_FLAG_HIDDEN);
+    
+    // Hide settings panel
+    lv_obj_add_flag(settings_panel, LV_OBJ_FLAG_HIDDEN);
+    
+    Serial.println("Brightness menu closed");  // Debug print
+}
+
+static void show_brightness_settings() {
+    brightness_menu_active = true;
+    selected_brightness = current_brightness;
+    
+    // Create dialog
+    brightness_dialog = lv_obj_create(lv_scr_act());
+    lv_obj_set_size(brightness_dialog, 220, 200);
+    lv_obj_center(brightness_dialog);
+    
+    // Title
+    lv_obj_t *title = lv_label_create(brightness_dialog);
+    lv_label_set_text(title, "Brightness Settings");
+    lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 10);
+    
+    // Current brightness label
+    brightness_value_label = lv_label_create(brightness_dialog);
+    char buf[8];
+    snprintf(buf, sizeof(buf), "%d%%", (brightness_values[current_brightness] * 100) / 255);
+    lv_label_set_text(brightness_value_label, buf);
+    lv_obj_align(brightness_value_label, LV_ALIGN_TOP_MID, 0, 40);
+    
+    // Brightness buttons
+    static const char * bright_btn_map[] = {"20%", "40%", "60%", "80%", "100%", ""};
+    brightness_btnm = lv_btnmatrix_create(brightness_dialog);
+    lv_btnmatrix_set_map(brightness_btnm, bright_btn_map);
+    lv_obj_set_size(brightness_btnm, 180, 40);
+    lv_obj_align(brightness_btnm, LV_ALIGN_TOP_MID, 0, 70);
+    lv_btnmatrix_set_btn_ctrl_all(brightness_btnm, LV_BTNMATRIX_CTRL_CHECKABLE);
+    lv_btnmatrix_set_one_checked(brightness_btnm, true);
+    lv_btnmatrix_set_btn_ctrl(brightness_btnm, current_brightness, LV_BTNMATRIX_CTRL_CHECKED);
+    
+    // Event handler for brightness buttons
+    lv_obj_add_event_cb(brightness_btnm, [](lv_event_t *e) {
+        lv_obj_t *obj = lv_event_get_target(e);
+        uint32_t id = lv_btnmatrix_get_selected_btn(obj);
+        selected_brightness = id;
+        current_brightness = selected_brightness;
+        M5.Lcd.setBrightness(brightness_values[current_brightness]);
+        update_brightness_display();
+        
+        if (sound_enabled) {
+            playBeep(2000, 50);
+        }
+    }, LV_EVENT_VALUE_CHANGED, NULL);
+    
+    // OK Button
+    lv_obj_t *ok_btn = lv_btn_create(brightness_dialog);
+    lv_obj_t *btn_label = lv_label_create(ok_btn);
+    lv_label_set_text(btn_label, "OK");
+    lv_obj_center(btn_label);
+    lv_obj_set_size(ok_btn, 100, 40);
+    lv_obj_align(ok_btn, LV_ALIGN_BOTTOM_MID, 0, -10);
+    
+    // Event handler for OK button - simplified to just call close_brightness_menu
+    lv_obj_add_event_cb(ok_btn, [](lv_event_t *e) {
+        close_brightness_menu();
+    }, LV_EVENT_CLICKED, NULL);
 }
 
 static void create_settings_panel() {
@@ -270,7 +387,7 @@ static void create_settings_panel() {
     
     // Add navigation instructions
     lv_obj_t *nav_label = lv_label_create(settings_panel);
-    lv_label_set_text(nav_label, "BTN1: Up | BTN2: Down | KEY: Select");
+    lv_label_set_text(nav_label, "Red: Up | Blue: Down | KEY: Select");
     lv_obj_align(nav_label, LV_ALIGN_BOTTOM_MID, 0, -10);
     lv_obj_set_style_text_color(nav_label, lv_color_white(), 0);
 }
@@ -310,11 +427,7 @@ static void handle_menu_selection(int item) {
             break;
             
         case 1:  // Brightness
-            current_brightness = (current_brightness + 1) % BRIGHTNESS_LEVELS;
-            M5.Lcd.setBrightness(brightness_values[current_brightness]);
-            saveSettings();  // Save the new brightness setting
-            menu_active = false;
-            lv_obj_add_flag(settings_panel, LV_OBJ_FLAG_HIDDEN);
+            show_brightness_settings();
             break;
             
         case 2:  // Emissivity
@@ -384,6 +497,40 @@ static void handle_menu_selection(int item) {
 }
 
 static void handle_button_press(int pin) {
+    if (brightness_menu_active) {
+        Serial.printf("Button press in brightness menu: pin %d\n", pin);  // Debug print
+        
+        if (pin == BUTTON1_PIN) {
+            // Move selection left
+            if (selected_brightness > 0) {
+                selected_brightness--;
+                current_brightness = selected_brightness;
+                M5.Lcd.setBrightness(brightness_values[current_brightness]);
+                update_brightness_display();
+                if (sound_enabled) {
+                    playBeep(2000, 50);
+                }
+            }
+        }
+        else if (pin == BUTTON2_PIN) {
+            // Move selection right
+            if (selected_brightness < BRIGHTNESS_LEVELS - 1) {
+                selected_brightness++;
+                current_brightness = selected_brightness;
+                M5.Lcd.setBrightness(brightness_values[current_brightness]);
+                update_brightness_display();
+                if (sound_enabled) {
+                    playBeep(2000, 50);
+                }
+            }
+        }
+        else if (pin == KEY_PIN) {
+            Serial.println("Key unit pressed in brightness menu");  // Debug print
+            close_brightness_menu();
+        }
+        return;
+    }
+    
     if (menu_active) {
         if (pin == BUTTON1_PIN) {  // Move selection up
             selected_menu_item = (selected_menu_item > 0) ? selected_menu_item - 1 : 5;
@@ -607,6 +754,7 @@ void loop() {
     // Check Button2 press (Down/Next)
     bool button2State = digitalRead(BUTTON2_PIN);
     if (button2State == LOW && lastButton2State == HIGH) {
+        Serial.println("Button 2 pressed");  // Debug print
         handle_button_press(BUTTON2_PIN);
         delay(50); // Debounce
     }
@@ -615,6 +763,7 @@ void loop() {
     // Check Button1 press (Up/Previous)
     bool button1State = digitalRead(BUTTON1_PIN);
     if (button1State == LOW && lastButton1State == HIGH) {
+        Serial.println("Button 1 pressed");  // Debug print
         handle_button_press(BUTTON1_PIN);
         delay(50); // Debounce
     }
@@ -623,36 +772,16 @@ void loop() {
     // Check KEY press (Select/Enter)
     bool keyState = digitalRead(KEY_PIN);
     if (keyState == LOW && lastKeyState == HIGH) {
-        if (bar_active) {
-            // When emissivity bar is active, set the value and return to menu
-            if (emissivity_bar) {
-                lv_obj_del(lv_obj_get_parent(emissivity_bar));
-                emissivity_bar = NULL;
-                emissivity_label = NULL;
-            }
-            bar_active = false;
-            
-            // If emissivity was changed, show restart dialog
-            if (emissivity_changed) {
-                playBeep(2500, 50);
-                show_restart_confirmation();
-            } else {
-                playBeep(3000, 50);
-                menu_active = false;
-                lv_obj_add_flag(settings_panel, LV_OBJ_FLAG_HIDDEN);
-            }
+        Serial.println("Key unit pressed");  // Debug print
+        if (brightness_menu_active) {
+            Serial.println("Key press detected in brightness menu");  // Debug print
+            close_brightness_menu();
         } else if (menu_active) {
-            playBeep(2500, 50);
-            handle_menu_selection(selected_menu_item);
+            Serial.println("Key press detected in main menu");  // Debug print
+            handle_button_press(KEY_PIN);
         } else {
-            showGauge = !showGauge;
-            playBeep(3000, 50);
-            if (showGauge) {
-                lv_obj_clear_flag(meter, LV_OBJ_FLAG_HIDDEN);
-            } else {
-                lv_obj_add_flag(meter, LV_OBJ_FLAG_HIDDEN);
-            }
-            saveSettings();
+            Serial.println("Key press detected in main screen");  // Debug print
+            handle_button_press(KEY_PIN);
         }
         delay(50); // Debounce
     }
@@ -842,10 +971,9 @@ static void restart_msgbox_event_cb(lv_event_t *e) {
         // Cancel the change
         current_emissivity = pending_emissivity; // Restore the original value
         if (emissivity_bar != NULL) {
-            lv_bar_set_value(emissivity_bar, current_emissivity * 100, LV_ANIM_OFF);
-            char buf[32];
-            snprintf(buf, sizeof(buf), "Emissivity: %.2f", current_emissivity);
-            lv_label_set_text(emissivity_label, buf);
+            lv_obj_del(lv_obj_get_parent(emissivity_bar));
+            emissivity_bar = NULL;
+            emissivity_label = NULL;
         }
         lv_obj_del(restart_msgbox);
         restart_msgbox = NULL;
@@ -908,87 +1036,65 @@ static void emissivity_slider_event_cb(lv_event_t *e) {
 }
 
 static void show_sound_settings() {
+    static lv_obj_t *sound_dialog = NULL;  // Make it static so we can access it in callbacks
+    
     // Create dialog
-    lv_obj_t *dialog = lv_obj_create(lv_scr_act());
-    lv_obj_set_size(dialog, 220, 200);
-    lv_obj_center(dialog);
+    sound_dialog = lv_obj_create(lv_scr_act());
+    lv_obj_set_size(sound_dialog, 220, 200);
+    lv_obj_center(sound_dialog);
     
     // Title
-    lv_obj_t *title = lv_label_create(dialog);
+    lv_obj_t *title = lv_label_create(sound_dialog);
     lv_label_set_text(title, "Sound Settings");
     lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 10);
     
-    // Sound Enable Switch
-    lv_obj_t *switch_label = lv_label_create(dialog);
-    lv_label_set_text(switch_label, "Sound Enable:");
-    lv_obj_align(switch_label, LV_ALIGN_TOP_LEFT, 20, 40);
-    
-    lv_obj_t *sound_switch = lv_switch_create(dialog);
-    lv_obj_align(sound_switch, LV_ALIGN_TOP_RIGHT, -20, 40);
+    // Sound toggle switch
+    lv_obj_t *sound_switch = lv_switch_create(sound_dialog);
+    lv_obj_align(sound_switch, LV_ALIGN_TOP_MID, 0, 50);
     if (sound_enabled) {
         lv_obj_add_state(sound_switch, LV_STATE_CHECKED);
     }
     
-    // Volume Label
-    lv_obj_t *vol_label = lv_label_create(dialog);
-    lv_label_set_text(vol_label, "Volume:");
-    lv_obj_align(vol_label, LV_ALIGN_TOP_LEFT, 20, 80);
+    // Switch label
+    lv_obj_t *switch_label = lv_label_create(sound_dialog);
+    lv_label_set_text(switch_label, sound_enabled ? "Sound: ON" : "Sound: OFF");
+    lv_obj_align(switch_label, LV_ALIGN_TOP_MID, 0, 90);
     
-    // Volume value label
-    lv_obj_t *vol_value = lv_label_create(dialog);
-    char buf[8];
-    snprintf(buf, sizeof(buf), "%d%%", volume_level);
-    lv_label_set_text(vol_value, buf);
-    lv_obj_align(vol_value, LV_ALIGN_TOP_MID, 0, 80);
-    
-    // Volume buttons
-    static const char * vol_btn_map[] = {"25%", "50%", "75%", "100%", ""};
-    lv_obj_t *vol_btnm = lv_btnmatrix_create(dialog);
-    lv_btnmatrix_set_map(vol_btnm, vol_btn_map);
-    lv_obj_set_size(vol_btnm, 180, 40);
-    lv_obj_align(vol_btnm, LV_ALIGN_TOP_MID, 0, 110);
-    lv_btnmatrix_set_btn_ctrl_all(vol_btnm, LV_BTNMATRIX_CTRL_CHECKABLE);
-    lv_btnmatrix_set_one_checked(vol_btnm, true);
-    lv_btnmatrix_set_btn_ctrl(vol_btnm, selected_volume, LV_BTNMATRIX_CTRL_CHECKED);
-    
-    // Event handlers
+    // Event handler for switch
     lv_obj_add_event_cb(sound_switch, [](lv_event_t *e) {
         lv_obj_t *sw = lv_event_get_target(e);
-        sound_enabled = lv_obj_has_state(sw, LV_STATE_CHECKED);
+        bool is_checked = lv_obj_has_state(sw, LV_STATE_CHECKED);
+        sound_enabled = is_checked;
+        
+        // Update switch label
+        lv_obj_t *label = lv_obj_get_child(lv_obj_get_parent(sw), 2);  // Get the label object
+        if (label != NULL) {
+            lv_label_set_text(label, sound_enabled ? "Sound: ON" : "Sound: OFF");
+        }
+        
         if (sound_enabled) {
-            playBeep(2000, 50);  // Beep for each second of countdown
+            playBeep(2000, 50);
         }
     }, LV_EVENT_VALUE_CHANGED, NULL);
     
-    lv_obj_add_event_cb(vol_btnm, [](lv_event_t *e) {
-        lv_obj_t *obj = lv_event_get_target(e);
-        uint32_t id = lv_btnmatrix_get_selected_btn(obj);
-        selected_volume = id;
-        volume_level = (id + 1) * 25;
-        
-        // Update volume label
-        lv_obj_t *label = lv_obj_get_child(lv_obj_get_parent(obj), 4); // Volume value label
-        char buf[8];
-        snprintf(buf, sizeof(buf), "%d%%", volume_level);
-        lv_label_set_text(label, buf);
-        
-        playBeep(2000, 50);  // Beep for each second of countdown
-    }, LV_EVENT_VALUE_CHANGED, NULL);
-    
     // OK Button
-    lv_obj_t *btn = lv_btn_create(dialog);
+    lv_obj_t *btn = lv_btn_create(sound_dialog);
     lv_obj_t *btn_label = lv_label_create(btn);
     lv_label_set_text(btn_label, "OK");
     lv_obj_center(btn_label);
     lv_obj_set_size(btn, 100, 40);
     lv_obj_align(btn, LV_ALIGN_BOTTOM_MID, 0, -10);
     
+    // Event handler for OK button
     lv_obj_add_event_cb(btn, [](lv_event_t *e) {
-        lv_obj_t *btn = lv_event_get_target(e);
-        lv_obj_t *dialog = lv_obj_get_parent(btn);
         saveSettings();
-        playBeep(2000, 50);  // Beep for each second of countdown
-        lv_obj_del(dialog);
+        if (sound_enabled) {
+            playBeep(2000, 50);
+        }
+        if (sound_dialog != NULL) {
+            lv_obj_del(sound_dialog);
+            sound_dialog = NULL;
+        }
         menu_active = false;
         lv_obj_add_flag(settings_panel, LV_OBJ_FLAG_HIDDEN);
     }, LV_EVENT_CLICKED, NULL);

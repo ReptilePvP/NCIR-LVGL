@@ -1,3 +1,6 @@
+
+//Last Edited: 2/17/2015 10:19 AM
+
 #include "lv_conf.h"
 #include <Wire.h>
 #include <FastLED.h>

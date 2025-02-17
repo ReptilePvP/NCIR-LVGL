@@ -98,14 +98,6 @@ The following settings are automatically saved to EEPROM:
 - Sound settings (enabled/disabled and volume)
 - Emissivity value
 
-## Contributing
-
-1. Fork the repository
-2. Create a feature branch
-3. Commit your changes
-4. Push to the branch
-5. Create a Pull Request
-
 ## Development Notes
 
 ### Adding New Features
@@ -120,23 +112,9 @@ The following settings are automatically saved to EEPROM:
 - Check EEPROM addresses for settings conflicts
 - Verify I2C communication if sensor issues occur
 
-## License
-
-This project is open source and available under the MIT License.
-
 ## Acknowledgments
 
 - M5Stack for the excellent hardware platform
 - LVGL team for the graphics library
 - Contributors and testers
 
-## Version History
-
-See [CHANGELOG.md](CHANGELOG.md) for a detailed history of changes.
-
-## Support
-
-For issues, questions, or contributions, please:
-1. Check existing issues in the repository
-2. Create a new issue with a detailed description
-3. Include your hardware configuration and Arduino IDE version

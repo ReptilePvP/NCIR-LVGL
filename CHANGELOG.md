@@ -4,6 +4,35 @@ All notable changes to the M5Stack Temperature Monitoring Device project will be
 
 ## [Unreleased]
 
+## [1.1.0] - 2025-02-17
+
+### Added
+- Enhanced debug logging system throughout the application
+  - Function entry/exit logging
+  - State change tracking
+  - Value update monitoring
+  - Error condition detection
+
+### Changed
+- Improved sound settings storage format
+  - New format supports fine-grained volume control (5% steps)
+  - Volume range from 25% to 100%
+  - Automatic conversion of old settings format
+- Enhanced brightness control interface
+  - Added sound feedback for brightness adjustments
+  - Improved button handling
+  - Better visual feedback
+- Refined menu navigation
+  - Consistent sound feedback across all menus
+  - Better state management
+  - Improved error handling
+
+### Fixed
+- Sound settings persistence across device restarts
+- Brightness control sound feedback
+- Menu state handling edge cases
+- Debug message consistency
+
 ## [1.0.0] - 2025-02-16
 
 ### Added

@@ -8,10 +8,15 @@ A sophisticated temperature monitoring system built on the M5Stack CoreS3 platfo
 - Beautiful LVGL-based graphical interface
 - Interactive touch controls
 - Configurable temperature units (Celsius/Fahrenheit)
-- Adjustable screen brightness
+- Adjustable screen brightness with 4 levels (25%, 50%, 75%, 100%)
 - Customizable gauge display
-- Sound feedback system with adjustable volume
+- Advanced sound feedback system
+  - Fine-grained volume control (5% steps)
+  - Volume range from 25% to 100%
+  - Distinct tones for different actions
+  - Enable/Disable option
 - Persistent settings storage
+- Comprehensive debug logging system
 
 ## Hardware Requirements
 
@@ -49,6 +54,24 @@ A sophisticated temperature monitoring system built on the M5Stack CoreS3 platfo
    - LVGL
    - FastLED
 3. Clone this repository
+### Development Features
+
+- Comprehensive debug logging system
+  - Function entry/exit tracking
+  - State change monitoring
+  - Value updates logging
+  - Error condition detection
+- Persistent settings storage
+  - Temperature unit preference
+  - Screen brightness (25%, 50%, 75%, 100%)
+  - Gauge visibility
+  - Sound settings (On/Off and volume level)
+  - Emissivity value
+- Menu system
+  - Interactive settings menu
+  - Sound feedback
+  - Visual feedback
+  - State persistence
 4. Open `lvglex.ino` in Arduino IDE
 5. Select "M5Stack CoreS3" as your board
 6. Upload the code
@@ -98,6 +121,14 @@ The following settings are automatically saved to EEPROM:
 - Sound settings (enabled/disabled and volume)
 - Emissivity value
 
+## Contributing
+
+1. Fork the repository
+2. Create a feature branch
+3. Commit your changes
+4. Push to the branch
+5. Create a Pull Request
+
 ## Development Notes
 
 ### Adding New Features
@@ -112,9 +143,23 @@ The following settings are automatically saved to EEPROM:
 - Check EEPROM addresses for settings conflicts
 - Verify I2C communication if sensor issues occur
 
+## License
+
+This project is open source and available under the MIT License.
+
 ## Acknowledgments
 
 - M5Stack for the excellent hardware platform
 - LVGL team for the graphics library
 - Contributors and testers
 
+## Version History
+
+See [CHANGELOG.md](CHANGELOG.md) for a detailed history of changes.
+
+## Support
+
+For issues, questions, or contributions, please:
+1. Check existing issues in the repository
+2. Create a new issue with a detailed description
+3. Include your hardware configuration and Arduino IDE version

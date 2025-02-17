@@ -76,6 +76,7 @@ static lv_style_t style_text;
 static lv_style_t style_background;
 static lv_style_t style_settings_panel;
 static lv_style_t style_settings_btn;
+static lv_style_t style_battery;
 static lv_obj_t *settings_container = NULL;
 
 // State variables
@@ -106,6 +107,12 @@ static float pending_emissivity = 0.0f;
 static uint32_t restart_countdown = 0;
 static lv_timer_t *restart_timer = NULL;
 
+// Battery status
+static lv_obj_t *battery_label;
+static lv_obj_t *battery_icon;
+static bool last_charging_state = false;
+static uint8_t last_battery_level = 0;
+
 // Settings menu items
 const char* settings_labels[] = {
     "Temperature Unit",
@@ -126,6 +133,7 @@ static void restart_msgbox_event_cb(lv_event_t *e);
 static void restart_timer_cb(lv_timer_t *timer);
 static void emissivity_slider_event_cb(lv_event_t *e);
 static void playBeep(int frequency, int duration);
+static void update_battery_status();
 
 // Function to save settings to EEPROM
 void saveSettings() {
@@ -456,7 +464,11 @@ void setup() {
     cfg.internal_imu = false;
     cfg.internal_rtc = false;
     M5.begin(cfg);
-    
+
+    // Initialize Power Manager
+    M5.Power.begin();
+    M5.Power.setChargeCurrent(1000);
+
     // Initialize I2C
     Wire.begin(2, 1);
     Wire.setClock(100000);
@@ -493,6 +505,10 @@ void setup() {
     
     lv_style_init(&style_background);
     lv_style_set_bg_color(&style_background, lv_color_black());
+    
+    lv_style_init(&style_battery);
+    lv_style_set_text_color(&style_battery, lv_color_white());
+    lv_style_set_text_font(&style_battery, &lv_font_montserrat_16);
     
     // Create main container
     lv_obj_t *main_container = lv_obj_create(lv_scr_act());
@@ -545,6 +561,15 @@ void setup() {
     status_label = lv_label_create(main_container);
     lv_label_set_text(status_label, "");
     lv_obj_align(status_label, LV_ALIGN_BOTTOM_MID, 0, -20);
+    
+    // Create battery indicator
+    battery_icon = lv_label_create(lv_scr_act());
+    lv_obj_add_style(battery_icon, &style_battery, 0);
+    lv_obj_align(battery_icon, LV_ALIGN_TOP_RIGHT, -10, 5);
+    
+    battery_label = lv_label_create(lv_scr_act());
+    lv_obj_add_style(battery_label, &style_battery, 0);
+    lv_obj_align(battery_label, LV_ALIGN_TOP_RIGHT, -35, 5);
     
     // Initialize LED
     FastLED.addLeds<WS2812, LED_PIN, GRB>(leds, NUM_LEDS);
@@ -716,7 +741,42 @@ void loop() {
         lastTempUpdate = currentMillis;
     }
     
+    update_battery_status();
+    
     delay(5);
+}
+
+static void update_battery_status() {
+    int bat_level = M5.Power.getBatteryLevel();
+    bool is_charging = M5.Power.isCharging();
+    
+    // Only update if values have changed
+    if (bat_level != last_battery_level || is_charging != last_charging_state) {
+        // Update battery percentage
+        char bat_text[8];
+        snprintf(bat_text, sizeof(bat_text), "%d%%", bat_level);
+        lv_label_set_text(battery_label, bat_text);
+        
+        // Update battery icon with charging status
+        const char* icon = is_charging ? LV_SYMBOL_CHARGE : LV_SYMBOL_BATTERY_FULL;
+        lv_label_set_text(battery_icon, icon);
+        
+        // Update color based on battery level
+        lv_color_t color;
+        if (bat_level <= 20) {
+            color = lv_color_make(255, 0, 0); // Red for low battery
+        } else if (bat_level <= 50) {
+            color = lv_color_make(255, 165, 0); // Orange for medium
+        } else {
+            color = lv_color_make(0, 255, 0); // Green for good
+        }
+        
+        lv_obj_set_style_text_color(battery_label, color, 0);
+        lv_obj_set_style_text_color(battery_icon, color, 0);
+        
+        last_battery_level = bat_level;
+        last_charging_state = is_charging;
+    }
 }
 
 static void update_restart_countdown() {

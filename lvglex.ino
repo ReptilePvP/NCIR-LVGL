@@ -185,25 +185,28 @@ void loadSettings() {
         current_brightness = EEPROM.read(BRIGHTNESS_ADDR);
         showGauge = EEPROM.read(GAUGE_VISIBLE_ADDR) == 1;
         
-        // Load sound settings - support both old and new format
+        // Load sound settings
         uint8_t sound_byte = EEPROM.read(SOUND_SETTINGS_ADDR);
         sound_enabled = (sound_byte & 0x80) != 0;
         
         // Check if using old format (lower 2 bits only)
         if ((sound_byte & 0x7F) <= 0x03) {
-            // Old format: 2 bits for 25% increments
+            // Convert old format to new and save it back
             volume_level = ((sound_byte & 0x03) * 25) + 25;
-            Serial.println("Loaded volume using old format");  // Debug print
+            Serial.println("Converting old volume format to new format");  // Debug print
+            // Save in new format immediately
+            EEPROM.write(SOUND_SETTINGS_ADDR, (sound_enabled ? 0x80 : 0) | (volume_level & 0x7F));
+            EEPROM.commit();
         } else {
-            // New format: 7 bits for direct percentage
+            // Already in new format
             volume_level = sound_byte & 0x7F;
-            // Ensure volume is within valid range
-            if (volume_level < 25) volume_level = 25;
-            if (volume_level > 100) volume_level = 100;
-            Serial.println("Loaded volume using new format");  // Debug print
         }
         
-        Serial.print("Loaded volume level: ");  // Debug print
+        // Ensure volume is within valid range
+        if (volume_level < 25) volume_level = 25;
+        if (volume_level > 100) volume_level = 100;
+        
+        Serial.print("Volume level set to: ");  // Debug print
         Serial.println(volume_level);
         
         // Load emissivity

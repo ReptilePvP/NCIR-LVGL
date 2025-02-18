@@ -1,3 +1,6 @@
+
+// Last updated 2/18/25 5:26 AM
+
 # M5Stack Temperature Monitoring Device
 
 A sophisticated temperature monitoring system built on the M5Stack CoreS3 platform, featuring an interactive LVGL interface, customizable sensor settings, and real-time temperature display.

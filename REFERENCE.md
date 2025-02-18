@@ -1,3 +1,6 @@
+
+// Last updated 2/18/25 5:26 AM
+
 # M5Stack Temperature Monitor Reference Guide
 
 ## Hardware Configuration

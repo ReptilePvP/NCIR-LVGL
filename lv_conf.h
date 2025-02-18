@@ -50,6 +50,19 @@
 #define LV_GPU_DMA2D_CMSIS_INCLUDE
 #define LV_USE_PRINTF 1
 
+/*-------------
+ * Drawing
+ *-----------*/
+
+/*Enable complex draw engine*/
+#define LV_DRAW_COMPLEX 1
+
+/*-------------
+ * Widgets
+ *-----------*/
+
+#define LV_USE_SLIDER    1   /* Enable slider widget */
+
 /*====================
  * FONT USAGE
  *====================*/
@@ -70,21 +83,22 @@
  *  WIDGET USAGE
  *================*/
 
-#define LV_USE_ARC        0
-#define LV_USE_BAR        1    // Changed to 1
-#define LV_USE_BTN        1    // Changed to 1
-#define LV_USE_BTNMATRIX  0
-#define LV_USE_CANVAS     0
-#define LV_USE_CHECKBOX   0
-#define LV_USE_DROPDOWN   0
+#define LV_USE_ARC        1
+#define LV_USE_BAR        1
+#define LV_USE_BTN        1
+#define LV_USE_BTNMATRIX  1
+#define LV_USE_CANVAS     1
+#define LV_USE_CHECKBOX   1
+#define LV_USE_DROPDOWN   1    /* Enable dropdown widget */
 #define LV_USE_IMG        1
 #define LV_USE_LABEL      1
-#define LV_USE_LINE       1    // Changed to 1
-#define LV_USE_ROLLER     0
-#define LV_USE_SLIDER     0
-#define LV_USE_SWITCH     0
-#define LV_USE_TEXTAREA   0
-#define LV_USE_TABLE      0
+#define LV_USE_LINE       1
+#define LV_USE_ROLLER     1
+#define LV_USE_SLIDER     1
+#define LV_USE_SWITCH     1    /* Enable switch widget */
+#define LV_USE_TEXTAREA   1
+#define LV_USE_TABLE      1
+#define LV_USE_MSGBOX     1   /* Enable message box widget */
 
 /*==================
  * EXTRA COMPONENTS
@@ -99,7 +113,7 @@
 #define LV_USE_LIST       0
 #define LV_USE_MENU       0
 #define LV_USE_METER      1    // Changed to 1 (useful for temperature display)
-#define LV_USE_MSGBOX     0
+#define LV_USE_MSGBOX     1
 #define LV_USE_SPINBOX    0
 #define LV_USE_SPINNER    0
 #define LV_USE_TABVIEW    0

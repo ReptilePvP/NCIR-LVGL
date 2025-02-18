@@ -1,3 +1,6 @@
+
+// Last updated 2/17/25 11:01 PM
+
 #include "lv_conf.h"
 #include <Wire.h>
 #include <FastLED.h>
@@ -13,6 +16,8 @@
 #define BUTTON2_PIN 18
 #define NUM_LEDS 1
 
+#define MLX_I2C_ADDR 0x5A
+
 // Screen dimensions
 #define SCREEN_WIDTH 320
 #define SCREEN_HEIGHT 240
@@ -22,6 +27,15 @@
 #define TEMP_MAX_C 396
 #define TEMP_MIN_F 300
 #define TEMP_MAX_F 745
+
+// Temperature readings struct
+struct TempReadings {
+    float object;
+    float ambient;
+};
+
+// Function prototype
+TempReadings readTemperatures();
 
 // Temperature ranges for dabs (in Fahrenheit)
 #define TEMP_TOO_COLD_F 400    // Below this is too cold
@@ -41,6 +55,7 @@ static uint32_t lastLvglTick = 0;
 
 // Update intervals
 #define TEMP_UPDATE_INTERVAL 100  // Update temperature every 100ms for more responsive readings
+#define DEBUG_INTERVAL 5000       // Debug output every 5 seconds
 
 // EEPROM addresses for settings
 #define EEPROM_SIZE 16
@@ -79,6 +94,12 @@ static lv_style_t style_settings_panel;
 static lv_style_t style_settings_btn;
 static lv_style_t style_battery;
 static lv_obj_t *settings_container = NULL;
+
+// New UI elements
+static lv_obj_t *trend_label = NULL;      // For up/down arrow
+static lv_obj_t *ambient_label = NULL;    // For ambient temperature
+static lv_obj_t *timestamp_label = NULL;  // For last reading time
+static float last_temp = 0;               // For trend calculation
 
 // State variables
 static bool showGauge = true;      // Track gauge visibility
@@ -664,22 +685,155 @@ static lv_disp_drv_t disp_drv;
 
 // Temperature unit
 
-float readObjectTemperature() {
-    Wire.beginTransmission(0x5A);
-    Wire.write(0x07);
-    if(Wire.endTransmission(false) != 0) {
-        return -999.0;
-    }
-    
-    if(Wire.requestFrom(0x5A, 2) != 2) {
-        return -999.0;
-    }
+// Function to read current emissivity from sensor
+float readEmissivity() {
+    Wire.beginTransmission(MLX_I2C_ADDR);
+    Wire.write(0x24);  // Emissivity register address
+    Wire.endTransmission(false);
+    Wire.requestFrom(MLX_I2C_ADDR, 2);
     
     if (Wire.available() == 2) {
-        uint16_t object_raw = (Wire.read() | (Wire.read() << 8));
-        return object_raw * 0.02 - 273.15;
+        uint8_t lsb = Wire.read();
+        uint8_t msb = Wire.read();
+        uint16_t currentEmissivity = (msb << 8) | lsb;
+        float actualEmissivity = currentEmissivity / 65535.0;
+        Serial.printf("Current sensor emissivity: %.3f (raw: 0x%04X)\n", actualEmissivity, currentEmissivity);
+        return actualEmissivity;
     }
-    return -999.0;
+    return 0.95f; // Default if read fails
+}
+
+TempReadings readTemperatures() {
+    TempReadings temps = {0, 0};
+    static uint32_t lastDebugOutput = 0;
+    bool printDebug = (millis() - lastDebugOutput) >= DEBUG_INTERVAL;
+    
+    // Check if sensor is responding
+    Wire.beginTransmission(MLX_I2C_ADDR);
+    if (Wire.endTransmission() != 0) {
+        if (printDebug) {
+            Serial.println("MLX90614 not responding");
+            lastDebugOutput = millis();
+        }
+        return temps;
+    }
+    
+    // Read ambient temperature
+    Wire.beginTransmission(MLX_I2C_ADDR);
+    Wire.write(0x06);
+    if (Wire.endTransmission(false) != 0) {
+        if (printDebug) {
+            Serial.println("Failed to write ambient command");
+            lastDebugOutput = millis();
+        }
+        return temps;
+    }
+    
+    Wire.requestFrom(MLX_I2C_ADDR, 3);  // Request 3 bytes (2 data + 1 PEC)
+    if (Wire.available() >= 2) {
+        uint16_t ambient_raw = Wire.read() | (Wire.read() << 8);
+        Wire.read();  // Read PEC byte
+        
+        // Check if temperature is valid (not 0 or 0xFFFF)
+        if (ambient_raw != 0 && ambient_raw != 0xFFFF) {
+            temps.ambient = ambient_raw * 0.02 - 273.15;
+            if (printDebug) {
+                float ambient_f = temps.ambient * 9.0/5.0 + 32.0;
+                Serial.print("Ambient Raw: 0x"); Serial.print(ambient_raw, HEX);
+                Serial.print(" ("); Serial.print(ambient_raw); Serial.print(")");
+                Serial.print(" Ambient Temp: "); Serial.print(ambient_f, 1); Serial.println("°F");
+            }
+        } else {
+            if (printDebug) {
+                Serial.println("Invalid ambient reading");
+            }
+            return temps;
+        }
+    } else {
+        if (printDebug) {
+            Serial.println("Failed to read ambient temperature");
+            lastDebugOutput = millis();
+        }
+        return temps;
+    }
+    
+    delay(10); // Short delay between reads
+    
+    // Read object temperature
+    Wire.beginTransmission(MLX_I2C_ADDR);
+    Wire.write(0x07);
+    if (Wire.endTransmission(false) != 0) {
+        if (printDebug) {
+            Serial.println("Failed to write object command");
+            lastDebugOutput = millis();
+        }
+        return temps;
+    }
+    
+    Wire.requestFrom(MLX_I2C_ADDR, 3);  // Request 3 bytes (2 data + 1 PEC)
+    if (Wire.available() >= 2) {
+        uint16_t object_raw = Wire.read() | (Wire.read() << 8);
+        Wire.read();  // Read PEC byte
+        
+        // Check if temperature is valid (not 0 or 0xFFFF)
+        if (object_raw != 0 && object_raw != 0xFFFF) {
+            temps.object = object_raw * 0.02 - 273.15;
+            if (printDebug) {
+                float object_f = temps.object * 9.0/5.0 + 32.0;
+                Serial.print("Object Raw: 0x"); Serial.print(object_raw, HEX);
+                Serial.print(" ("); Serial.print(object_raw); Serial.print(")");
+                Serial.print(" Object Temp: "); Serial.print(object_f, 1); Serial.println("°F");
+                lastDebugOutput = millis();
+            }
+        } else {
+            if (printDebug) {
+                Serial.println("Invalid object reading");
+            }
+        }
+    } else {
+        if (printDebug) {
+            Serial.println("Failed to read object temperature");
+            lastDebugOutput = millis();
+        }
+    }
+    
+    if (printDebug) {
+        Serial.println("----------------------------------------");
+    }
+    
+    return temps;
+}
+
+void setEmissivity(float value) {
+    if (value >= 0.1 && value <= 1.0) {
+        // Read current emissivity first
+        float currentEmissivity = readEmissivity();
+        
+        // Only update if different (accounting for floating point comparison)
+        if (abs(currentEmissivity - value) > 0.001) {
+            uint16_t targetEmissivity = value * 65535;
+            
+            Wire.beginTransmission(MLX_I2C_ADDR);
+            Wire.write(0x24);  // Emissivity register address
+            Wire.write(targetEmissivity & 0xFF);  // LSB
+            Wire.write(targetEmissivity >> 8);    // MSB
+            Wire.endTransmission();
+            
+            Serial.printf("Setting emissivity to: %.3f (raw: 0x%04X)\n", value, targetEmissivity);
+            
+            // Verify the change
+            delay(10);
+            float newEmissivity = readEmissivity();
+            if (abs(newEmissivity - value) <= 0.001) {
+                Serial.println("Emissivity update successful");
+                current_emissivity = value;
+            } else {
+                Serial.println("Emissivity update failed!");
+            }
+        } else {
+            Serial.println("Emissivity already at target value");
+        }
+    }
 }
 
 void my_disp_flush(lv_disp_drv_t *disp, const lv_area_t *area, lv_color_t *color_p) {
@@ -711,9 +865,20 @@ void setup() {
     M5.Power.begin();
     M5.Power.setChargeCurrent(1000);
 
-    // Initialize I2C
+    // Initialize I2C for MLX90614
     Wire.begin(2, 1);
     Wire.setClock(100000);
+    
+    // Check if MLX90614 is responding
+    Wire.beginTransmission(MLX_I2C_ADDR);
+    if (Wire.endTransmission() != 0) {
+        Serial.println("MLX90614 not found! Check wiring");
+    } else {
+        Serial.println("MLX90614 found!");
+        // Read current emissivity
+        float sensorEmissivity = readEmissivity();
+        Serial.printf("Initial sensor emissivity: %.3f\n", sensorEmissivity);
+    }
     
     // Initialize display
     M5.Lcd.begin();
@@ -752,58 +917,89 @@ void setup() {
     lv_style_set_text_color(&style_battery, lv_color_white());
     lv_style_set_text_font(&style_battery, &lv_font_montserrat_16);
     
-    // Create main container
-    lv_obj_t *main_container = lv_obj_create(lv_scr_act());
-    lv_obj_set_size(main_container, SCREEN_WIDTH, SCREEN_HEIGHT);
-    lv_obj_add_style(main_container, &style_background, 0);
+    // Create main screen container
+    lv_obj_t *main_cont = lv_obj_create(lv_scr_act());
+    lv_obj_set_size(main_cont, SCREEN_WIDTH, SCREEN_HEIGHT);
+    lv_obj_set_style_pad_all(main_cont, 10, 0);
+    lv_obj_set_style_bg_color(main_cont, lv_color_black(), 0);
+    lv_obj_set_style_border_width(main_cont, 0, 0);
     
-    // Create meter
-    meter = lv_meter_create(main_container);
-    lv_obj_center(meter);
-    lv_obj_set_size(meter, 200, 200);
+    // Create temperature display area
+    lv_obj_t *temp_cont = lv_obj_create(main_cont);
+    lv_obj_set_size(temp_cont, 280, 120);
+    lv_obj_align(temp_cont, LV_ALIGN_TOP_MID, 0, 10);
+    lv_obj_set_style_bg_color(temp_cont, lv_color_hex(0x1a1a1a), 0);
+    lv_obj_set_style_radius(temp_cont, 10, 0);
+    lv_obj_set_style_border_width(temp_cont, 2, 0);
+    lv_obj_set_style_border_color(temp_cont, lv_color_hex(0x333333), 0);
     
-    // Create and configure scale
+    // Create and style temperature label
+    temp_label = lv_label_create(temp_cont);
+    lv_obj_set_style_text_font(temp_label, &lv_font_montserrat_24, 0);
+    lv_obj_set_style_text_color(temp_label, lv_color_hex(0xcccccc), 0);
+    lv_label_set_text(temp_label, "Temperature");
+    lv_obj_align(temp_label, LV_ALIGN_TOP_MID, 0, 10);
+    
+    // Create and style temperature value
+    temp_value_label = lv_label_create(temp_cont);
+    lv_obj_set_style_text_font(temp_value_label, &lv_font_montserrat_24, 0);
+    lv_obj_set_style_text_color(temp_value_label, lv_color_white(), 0);
+    lv_label_set_text(temp_value_label, "---°C");
+    lv_obj_align(temp_value_label, LV_ALIGN_CENTER, 0, 10);
+    
+    // Create trend indicator
+    trend_label = lv_label_create(temp_cont);
+    lv_obj_set_style_text_font(trend_label, &lv_font_montserrat_16, 0);
+    lv_obj_align(trend_label, LV_ALIGN_RIGHT_MID, -20, 0);
+    
+    // Create status label
+    status_label = lv_label_create(main_cont);
+    lv_obj_set_style_text_font(status_label, &lv_font_montserrat_16, 0);
+    lv_label_set_text(status_label, "");
+    lv_obj_align(status_label, LV_ALIGN_TOP_MID, 0, 140);  // Adjusted position below temperature container
+    
+    // Create ambient temperature display
+    ambient_label = lv_label_create(main_cont);
+    lv_obj_set_style_text_font(ambient_label, &lv_font_montserrat_16, 0);
+    lv_obj_set_style_text_color(ambient_label, lv_color_hex(0x888888), 0);
+    lv_obj_align(ambient_label, LV_ALIGN_BOTTOM_LEFT, 10, -10);
+    
+    // Create timestamp display
+    timestamp_label = lv_label_create(main_cont);
+    lv_obj_set_style_text_font(timestamp_label, &lv_font_montserrat_16, 0);
+    lv_obj_set_style_text_color(timestamp_label, lv_color_hex(0x888888), 0);
+    lv_obj_align(timestamp_label, LV_ALIGN_BOTTOM_RIGHT, -10, -10);
+    
+    // Create meter with adjusted size
+    meter = lv_meter_create(main_cont);
+    lv_obj_set_size(meter, 160, 160);  // Reduced from 200x200
+    lv_obj_align(meter, LV_ALIGN_BOTTOM_MID, 0, -20);  // Position at bottom
+    
+    // Create scale
     temp_scale = lv_meter_add_scale(meter);
     lv_meter_set_scale_ticks(meter, temp_scale, 41, 2, 10, lv_palette_main(LV_PALETTE_GREY));
     lv_meter_set_scale_major_ticks(meter, temp_scale, 8, 4, 15, lv_color_white(), 10);
     
-    // Set initial scale range
+    // Adjust scale range based on temperature unit
     if (temp_in_celsius) {
         lv_meter_set_scale_range(meter, temp_scale, TEMP_MIN_C, TEMP_MAX_C, 270, 135);
     } else {
         lv_meter_set_scale_range(meter, temp_scale, TEMP_MIN_F, TEMP_MAX_F, 270, 135);
     }
     
-    // Add the temperature indicator (needle)
-    temp_indic = lv_meter_add_needle_line(meter, temp_scale, 5, lv_palette_main(LV_PALETTE_RED), -10);
+    // Create indicator with adjusted size
+    temp_indic = lv_meter_add_needle_line(meter, temp_scale, 4, lv_palette_main(LV_PALETTE_RED), -10);
     
-    // Add colored arcs for temperature ranges
+    // Create arcs with adjusted width
     // Cold arc (blue)
-    temp_arc_low = lv_meter_add_arc(meter, temp_scale, 15, lv_palette_main(LV_PALETTE_BLUE), 0);
+    temp_arc_low = lv_meter_add_arc(meter, temp_scale, 10, lv_palette_main(LV_PALETTE_BLUE), 0);
     
-    // Normal arc (green)
-    temp_arc_normal = lv_meter_add_arc(meter, temp_scale, 15, lv_palette_main(LV_PALETTE_GREEN), 0);
+    // Good range arc (green)
+    temp_arc_normal = lv_meter_add_arc(meter, temp_scale, 10, lv_palette_main(LV_PALETTE_GREEN), 0);
     
     // Hot arc (red)
-    temp_arc_high = lv_meter_add_arc(meter, temp_scale, 15, lv_palette_main(LV_PALETTE_RED), 0);
-    
-    // Create temperature label
-    temp_label = lv_label_create(main_container);
-    lv_label_set_text(temp_label, "Temperature:");
-    lv_obj_add_style(temp_label, &style_text, 0);
-    lv_obj_align(temp_label, LV_ALIGN_TOP_MID, 0, 10);
-    
-    // Create temperature value label with larger font
-    temp_value_label = lv_label_create(main_container);
-    lv_label_set_text(temp_value_label, "Reading...");
-    lv_obj_add_style(temp_value_label, &style_text, 0);
-    lv_obj_align(temp_value_label, LV_ALIGN_TOP_MID, 0, 40);
-    
-    // Create status label
-    status_label = lv_label_create(main_container);
-    lv_label_set_text(status_label, "");
-    lv_obj_align(status_label, LV_ALIGN_BOTTOM_MID, 0, -20);
-    
+    temp_arc_high = lv_meter_add_arc(meter, temp_scale, 10, lv_palette_main(LV_PALETTE_RED), 0);
+
     // Create battery indicator
     battery_icon = lv_label_create(lv_scr_act());
     lv_obj_add_style(battery_icon, &style_battery, 0);
@@ -891,83 +1087,90 @@ void loop() {
     // Update temperature more frequently
     static uint32_t lastTempUpdate = 0;
     if (currentMillis - lastTempUpdate > TEMP_UPDATE_INTERVAL) {
-        float objectTemp = readObjectTemperature();
+        TempReadings temps = readTemperatures();
+        float objTemp = temps.object;
+        float ambTemp = temps.ambient;
         
-        if (objectTemp > -273.15) {
-            if (!temp_in_celsius) {
-                objectTemp = objectTemp * 9.0 / 5.0 + 32.0; // Convert to Fahrenheit
-            }
-            
-            char tempStr[32];
-            snprintf(tempStr, sizeof(tempStr), "%d°%c", (int)round(objectTemp), temp_in_celsius ? 'C' : 'F');
+        // Update temperature display
+        char tempStr[32];
+        if (objTemp != 0) {  // Only update if we got a valid reading
+            float displayTemp = temp_in_celsius ? objTemp : (objTemp * 9.0/5.0 + 32.0);
+            snprintf(tempStr, sizeof(tempStr), "%d°%c", (int)round(displayTemp), temp_in_celsius ? 'C' : 'F');
             lv_label_set_text(temp_value_label, tempStr);
             
-            // Update meter value and scale based on temperature unit
+            // Update gauge
             if (temp_in_celsius) {
-                lv_meter_set_scale_range(meter, temp_scale, TEMP_MIN_C, TEMP_MAX_C, 270, 135);
-                lv_meter_set_indicator_value(meter, temp_indic, objectTemp);
+                lv_meter_set_indicator_value(meter, temp_indic, objTemp);
                 
-                // Update arcs with smooth animation
+                // Update arcs
                 lv_meter_set_indicator_start_value(meter, temp_arc_low, TEMP_MIN_C);
-                lv_meter_set_indicator_end_value(meter, temp_arc_low, MIN(objectTemp, TEMP_LOW_C));
+                lv_meter_set_indicator_end_value(meter, temp_arc_low, MIN(objTemp, TEMP_LOW_C));
                 
                 lv_meter_set_indicator_start_value(meter, temp_arc_normal, TEMP_LOW_C);
-                lv_meter_set_indicator_end_value(meter, temp_arc_normal, MIN(objectTemp, TEMP_HIGH_C));
+                lv_meter_set_indicator_end_value(meter, temp_arc_normal, MIN(objTemp, TEMP_HIGH_C));
                 
                 lv_meter_set_indicator_start_value(meter, temp_arc_high, TEMP_HIGH_C);
-                lv_meter_set_indicator_end_value(meter, temp_arc_high, MIN(objectTemp, TEMP_MAX_C));
-                
-                // Update status and LED color based on temperature ranges
-                if (objectTemp < TEMP_TOO_COLD_C) {
-                    lv_label_set_text(status_label, "TOO COLD");
-                    leds[0] = CRGB::Blue;
-                } else if (objectTemp < TEMP_LOW_C) {
-                    lv_label_set_text(status_label, "HEATING UP");
-                    leds[0] = CRGB::Yellow;
-                } else if (objectTemp <= TEMP_HIGH_C) {
-                    lv_label_set_text(status_label, "PERFECT!");
-                    leds[0] = CRGB::Green;
-                } else if (objectTemp <= TEMP_TOO_HOT_C) {
-                    lv_label_set_text(status_label, "COOLING DOWN");
-                    leds[0] = CRGB::Orange;
-                } else {
-                    lv_label_set_text(status_label, "TOO HOT!");
-                    leds[0] = CRGB::Red;
-                }
+                lv_meter_set_indicator_end_value(meter, temp_arc_high, MIN(objTemp, TEMP_MAX_C));
             } else {
-                lv_meter_set_scale_range(meter, temp_scale, TEMP_MIN_F, TEMP_MAX_F, 270, 135);
-                lv_meter_set_indicator_value(meter, temp_indic, objectTemp);
+                float temp_f = objTemp * 9.0/5.0 + 32.0;
+                lv_meter_set_indicator_value(meter, temp_indic, temp_f);
                 
-                // Update arcs with smooth animation
+                // Update arcs
                 lv_meter_set_indicator_start_value(meter, temp_arc_low, TEMP_MIN_F);
-                lv_meter_set_indicator_end_value(meter, temp_arc_low, MIN(objectTemp, TEMP_LOW_F));
+                lv_meter_set_indicator_end_value(meter, temp_arc_low, MIN(temp_f, TEMP_LOW_F));
                 
                 lv_meter_set_indicator_start_value(meter, temp_arc_normal, TEMP_LOW_F);
-                lv_meter_set_indicator_end_value(meter, temp_arc_normal, MIN(objectTemp, TEMP_HIGH_F));
+                lv_meter_set_indicator_end_value(meter, temp_arc_normal, MIN(temp_f, TEMP_HIGH_F));
                 
                 lv_meter_set_indicator_start_value(meter, temp_arc_high, TEMP_HIGH_F);
-                lv_meter_set_indicator_end_value(meter, temp_arc_high, MIN(objectTemp, TEMP_MAX_F));
-                
-                // Update status and LED color based on temperature ranges
-                if (objectTemp < TEMP_TOO_COLD_F) {
-                    lv_label_set_text(status_label, "TOO COLD");
-                    leds[0] = CRGB::Blue;
-                } else if (objectTemp < TEMP_LOW_F) {
-                    lv_label_set_text(status_label, "HEATING UP");
-                    leds[0] = CRGB::Yellow;
-                } else if (objectTemp <= TEMP_HIGH_F) {
-                    lv_label_set_text(status_label, "PERFECT!");
-                    leds[0] = CRGB::Green;
-                } else if (objectTemp <= TEMP_TOO_HOT_F) {
-                    lv_label_set_text(status_label, "COOLING DOWN");
-                    leds[0] = CRGB::Orange;
-                } else {
-                    lv_label_set_text(status_label, "TOO HOT!");
-                    leds[0] = CRGB::Red;
-                }
+                lv_meter_set_indicator_end_value(meter, temp_arc_high, MIN(temp_f, TEMP_MAX_F));
             }
-            FastLED.show();
+
+            // Calculate trend
+            const char* trend_arrow = (objTemp > last_temp + 0.5) ? "↑" : 
+                                    (objTemp < last_temp - 0.5) ? "↓" : "→";
+            lv_label_set_text(trend_label, trend_arrow);
+            
+            // Update status
+            float temp_f = temp_in_celsius ? (objTemp * 9.0/5.0 + 32.0) : objTemp;
+            const char* status_text;
+            lv_color_t status_color;
+            
+            if (temp_f < TEMP_TOO_COLD_F) {
+                status_text = "TOO COLD";
+                status_color = lv_color_hex(0x00ffff);
+            } else if (temp_f < TEMP_LOW_F) {
+                status_text = "COLD";
+                status_color = lv_color_hex(0x0088ff);
+            } else if (temp_f <= TEMP_HIGH_F) {
+                status_text = "GOOD";
+                status_color = lv_color_hex(0x00ff00);
+            } else if (temp_f <= TEMP_TOO_HOT_F) {
+                status_text = "HOT";
+                status_color = lv_color_hex(0xff8800);
+            } else {
+                status_text = "TOO HOT";
+                status_color = lv_color_hex(0xff0000);
+            }
+            
+            lv_label_set_text(status_label, status_text);
+            lv_obj_set_style_text_color(status_label, status_color, 0);
+            
+            // Update ambient temperature
+            char ambient_buf[32];
+            snprintf(ambient_buf, sizeof(ambient_buf), "Ambient: %d°%c", 
+                    (int)round(temp_in_celsius ? ambTemp : (ambTemp * 9.0/5.0 + 32.0)),
+                    temp_in_celsius ? 'C' : 'F');
+            lv_label_set_text(ambient_label, ambient_buf);
+            
+            last_temp = objTemp;
+        } else {
+            Serial.println("Invalid temperature reading");
+            lv_label_set_text(temp_value_label, "Error");
+            lv_label_set_text(status_label, "ERROR");
+            lv_obj_set_style_text_color(status_label, lv_color_hex(0xff0000), 0);
         }
+        
         lastTempUpdate = currentMillis;
     }
     
@@ -1086,21 +1289,6 @@ static void restart_msgbox_event_cb(lv_event_t *e) {
 // Timer callback for restart countdown
 static void restart_timer_cb(lv_timer_t *timer) {
     update_restart_countdown();
-}
-
-static void setEmissivity(float value) {
-    if (value != current_emissivity) {
-        pending_emissivity = current_emissivity; // Store the original value
-        current_emissivity = value;
-        emissivity_changed = true;
-        
-        Wire.beginTransmission(0x5A);
-        Wire.write(0x24);                   // Emissivity register address
-        uint16_t emissivityData = value * 65535;
-        Wire.write((uint8_t)(emissivityData >> 8));    // High byte
-        Wire.write((uint8_t)(emissivityData & 0xFF));  // Low byte
-        Wire.endTransmission();
-    }
 }
 
 static void emissivity_slider_event_cb(lv_event_t *e) {
@@ -1233,7 +1421,7 @@ static void show_sound_settings() {
         volume_level = lv_slider_get_value(slider);
         
         // Update volume label
-        lv_obj_t *label = lv_obj_get_child(lv_obj_get_parent(slider), 3);
+        lv_obj_t *label = lv_obj_get_child(lv_obj_get_parent(slider), 3);  // Volume value label
         if (label != NULL) {
             char buf[16];
             snprintf(buf, sizeof(buf), "%d%%", volume_level);

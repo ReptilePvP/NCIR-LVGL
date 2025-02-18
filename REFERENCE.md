@@ -167,12 +167,23 @@ Serial.print("State changed to: [state_name]");
 - OK Button Label: "OK"
 
 ### Restart Confirmation Dialog
+The restart confirmation dialog appears when changes to emissivity settings require a device restart. The dialog is controlled using physical buttons:
+
+- **Button 1**: Cancel changes and return to previous emissivity value
+- **Button 2**: Confirm changes and initiate device restart
+
+The dialog displays:
 - Title: "Restart Required"
-- Message: "Settings changed. Device needs to restart."
-- Countdown Text: "Restarting in [seconds]..."
-- Button Labels:
-  - "Cancel"
-  - "Restart"
+- Explanation message
+- Clear button labels for both options
+- 3-second countdown when restart is confirmed
+
+### Implementation Details
+- Dialog state tracked via `restart_dialog_active` flag
+- Custom styled container using LVGL
+- Non-touch interface using M5Stack Dual Button Unit
+- Automatic reversion of emissivity on cancel
+- Countdown timer with visual feedback before restart
 
 ### Status Messages
 - Initialization: "Initializing..."

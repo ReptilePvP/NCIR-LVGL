@@ -118,6 +118,7 @@ static bool brightness_menu_active = false;
 static uint8_t selected_brightness = 0;
 static bool sound_menu_active = false;  // Added sound menu state
 static lv_obj_t *sound_dialog = NULL;  // Added global sound dialog
+static float temp_emissivity = 0.0f;  // Temporary emissivity value
 
 // Sound settings
 #define MENU_BEEP_FREQ 2000
@@ -140,7 +141,6 @@ static lv_obj_t *volume_slider = NULL;  // Global for button access
 static lv_obj_t *restart_msgbox = NULL;
 static lv_obj_t *restart_label = NULL;
 static bool emissivity_changed = false;
-static float pending_emissivity = 0.0f;
 static uint32_t restart_countdown = 0;
 static lv_timer_t *restart_timer = NULL;
 
@@ -172,6 +172,10 @@ static void emissivity_slider_event_cb(lv_event_t *e);
 static void update_battery_status();
 static void show_brightness_settings();
 static void show_sound_settings();
+
+// Global variables for restart dialog
+static lv_obj_t *restart_cont = NULL;
+static bool restart_dialog_active = false;
 
 // Function to save settings to EEPROM
 void saveSettings() {
@@ -616,6 +620,11 @@ static void handle_menu_selection(int item) {
 }
 
 static void handle_button_press(int pin) {
+    if (restart_dialog_active) {
+        handle_restart_button(pin);
+        return;
+    }
+    
     if (bar_active) {
         // Handle emissivity adjustment
         if (pin == BUTTON1_PIN) {
@@ -625,7 +634,7 @@ static void handle_button_press(int pin) {
             char buf[32];
             snprintf(buf, sizeof(buf), "Current: %.2f", new_emissivity);
             lv_label_set_text(emissivity_label, buf);
-            setEmissivity(new_emissivity);
+            current_emissivity = new_emissivity;
         } else if (pin == BUTTON2_PIN) {
             // Increase emissivity (maximum 1.00)
             float new_emissivity = min(1.00f, current_emissivity + 0.01f);
@@ -633,11 +642,10 @@ static void handle_button_press(int pin) {
             char buf[32];
             snprintf(buf, sizeof(buf), "Current: %.2f", new_emissivity);
             lv_label_set_text(emissivity_label, buf);
-            setEmissivity(new_emissivity);
+            current_emissivity = new_emissivity;
         }
         return;
     }
-    
     if (sound_menu_active) {  // Sound menu handling
         if (pin == BUTTON1_PIN) {
             volume_level = (volume_level > 25) ? volume_level - VOLUME_STEP : 25;
@@ -1105,18 +1113,11 @@ void loop() {
             
             if (bar_active) {
                 Serial.println("Key press detected in emissivity menu");  // Debug print
-                // Close emissivity menu
-                lv_obj_t* parent = lv_obj_get_parent(emissivity_bar);
-                lv_obj_del(parent);
-                emissivity_bar = NULL;
-                emissivity_label = NULL;
-                bar_active = false;
-                menu_active = false;
-                if (sound_enabled) {
-                    playBeep(CONFIRM_BEEP_FREQ, BEEP_DURATION);
-                }
-                saveSettings();
-            } else if (brightness_menu_active) {
+                
+                // Show restart confirmation
+                show_restart_confirmation();
+            }
+            else if (brightness_menu_active) {
                 Serial.println("Key press detected in brightness menu");  // Debug print
                 close_brightness_menu();
             } else if (sound_menu_active) {
@@ -1286,96 +1287,91 @@ static void update_restart_countdown() {
 }
 
 static void show_restart_confirmation() {
-    static const char* btns[] = {"Yes, restart", "No, cancel", ""};
+    restart_dialog_active = true;
     
-    // Create message box
-    restart_msgbox = lv_msgbox_create(NULL, "Restart Required", NULL, btns, false);
-    
-    // Create and add the message label
-    restart_label = lv_label_create(restart_msgbox);
-    lv_label_set_text(restart_label, "Emissivity change requires a restart.\nWould you like to restart now?");
-    
-    // Position the label
-    lv_obj_set_style_text_align(restart_label, LV_TEXT_ALIGN_CENTER, 0);
-    lv_obj_align(restart_label, LV_ALIGN_TOP_MID, 0, 30);
-    
-    lv_obj_add_event_cb(restart_msgbox, restart_msgbox_event_cb, LV_EVENT_VALUE_CHANGED, NULL);
-    lv_obj_center(restart_msgbox);
+    // Create a styled container
+    restart_cont = lv_obj_create(lv_scr_act());
+    lv_obj_set_size(restart_cont, 280, 160);
+    lv_obj_center(restart_cont);
+    lv_obj_set_style_bg_color(restart_cont, lv_color_hex(0x303030), 0);
+    lv_obj_set_style_border_color(restart_cont, lv_color_hex(0x404040), 0);
+    lv_obj_set_style_border_width(restart_cont, 2, 0);
+    lv_obj_set_style_radius(restart_cont, 10, 0);
+    lv_obj_set_style_pad_all(restart_cont, 15, 0);
+
+    // Title
+    lv_obj_t *title = lv_label_create(restart_cont);
+    lv_label_set_text(title, "Restart Required");
+    lv_obj_set_style_text_font(title, &lv_font_montserrat_16, 0);
+    lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 0);
+
+    // Message
+    lv_obj_t *msg = lv_label_create(restart_cont);
+    lv_label_set_text(msg, "For the new emissivity to take effect,\nthe device must be restarted.\n\nDo you wish to continue?");
+    lv_obj_set_style_text_font(msg, &lv_font_montserrat_14, 0);
+    lv_obj_align(msg, LV_ALIGN_TOP_MID, 0, 30);
+
+    // Button labels
+    lv_obj_t *btn1_label = lv_label_create(restart_cont);
+    lv_label_set_text(btn1_label, "BTN1: No, cancel");
+    lv_obj_set_style_text_font(btn1_label, &lv_font_montserrat_14, 0);
+    lv_obj_align(btn1_label, LV_ALIGN_BOTTOM_LEFT, 0, 0);
+
+    lv_obj_t *btn2_label = lv_label_create(restart_cont);
+    lv_label_set_text(btn2_label, "BTN2: Yes, restart");
+    lv_obj_set_style_text_font(btn2_label, &lv_font_montserrat_14, 0);
+    lv_obj_align(btn2_label, LV_ALIGN_BOTTOM_RIGHT, 0, 0);
 }
 
-// Handle restart dialog events
-static void restart_msgbox_event_cb(lv_event_t *e) {
-    lv_obj_t *obj = lv_event_get_current_target(e);
-    const char *txt = lv_msgbox_get_active_btn_text(obj);
+static void handle_restart_button(int pin) {
+    if (!restart_dialog_active) return;
     
-    if (txt && strcmp(txt, "Yes, restart") == 0) {
-        playBeep(3000, 50);
-        // Start countdown from 5 seconds
-        restart_countdown = 5;
-        lv_label_set_text(restart_label, "Restarting in 5 seconds...");
-        
-        // Remove buttons
-        lv_obj_t *btnm = lv_msgbox_get_btns(restart_msgbox);
-        if (btnm) {
-            lv_obj_add_flag(btnm, LV_OBJ_FLAG_HIDDEN);
+    if (pin == BUTTON1_PIN) {
+        // No, cancel
+        // Revert emissivity change
+        if (bar_active) {
+            // Revert the bar and label to previous value
+            lv_bar_set_value(emissivity_bar, current_emissivity * 100, LV_ANIM_OFF);
+            char buf[32];
+            snprintf(buf, sizeof(buf), "Current: %.2f", current_emissivity);
+            lv_label_set_text(emissivity_label, buf);
         }
-        
-        // Create timer for countdown
-        restart_timer = lv_timer_create(restart_timer_cb, 1000, NULL);
-        
-        // Save settings
+        // Close dialog
+        lv_obj_del(restart_cont);
+        restart_dialog_active = false;
+    } 
+    else if (pin == BUTTON2_PIN) {
+        // Yes, restart
+        // Save the new emissivity value
+        current_emissivity = temp_emissivity;
         saveSettings();
-    } else {
-        playBeep(1000, 50);
-        // Cancel the change
-        current_emissivity = pending_emissivity; // Restore the original value
-        if (emissivity_bar != NULL) {
-            lv_obj_del(lv_obj_get_parent(emissivity_bar));
+        
+        // Close emissivity menu if open
+        if (bar_active) {
+            lv_obj_t* parent = lv_obj_get_parent(emissivity_bar);
+            lv_obj_del(parent);
             emissivity_bar = NULL;
             emissivity_label = NULL;
+            bar_active = false;
+            menu_active = false;
         }
-        lv_obj_del(restart_msgbox);
-        restart_msgbox = NULL;
-        restart_label = NULL;
-        emissivity_changed = false;
-    }
-}
-
-// Timer callback for restart countdown
-static void restart_timer_cb(lv_timer_t *timer) {
-    update_restart_countdown();
-}
-
-static void emissivity_slider_event_cb(lv_event_t *e) {
-    lv_obj_t *bar = lv_event_get_target(e);
-    lv_event_code_t code = lv_event_get_code(e);
-    
-    if (code == LV_EVENT_PRESSED || code == LV_EVENT_PRESSING) {
-        lv_point_t point;
-        lv_indev_get_point(lv_indev_get_act(), &point);
         
-        // Get bar coordinates and size
-        lv_area_t bar_coords;
-        lv_obj_get_coords(bar, &bar_coords);
+        // Close restart dialog
+        lv_obj_del(restart_cont);
+        restart_dialog_active = false;
         
-        // Calculate relative position (0-1)
-        float pos = (float)(point.x - bar_coords.x1) / (bar_coords.x2 - bar_coords.x1);
-        if (pos < 0) pos = 0;
-        if (pos > 1) pos = 1;
+        // Start restart countdown
+        restart_countdown = 3;
+        lv_timer_t *timer = lv_timer_create(restart_timer_cb, 1000, NULL);
+        lv_timer_set_repeat_count(timer, 3);
         
-        // Calculate new emissivity value (0.65-1.00)
-        float new_emissivity = 0.65f + (pos * 0.35f);
-        
-        // Update bar value
-        lv_bar_set_value(bar, new_emissivity * 100, LV_ANIM_OFF);
-        
-        // Update label
-        char buf[32];
-        snprintf(buf, sizeof(buf), "Current: %.2f", new_emissivity);
-        lv_label_set_text(emissivity_label, buf);
-        
-        // Update emissivity
-        setEmissivity(new_emissivity);
+        // Show countdown message
+        char buf[64];
+        snprintf(buf, sizeof(buf), "Restarting in %d...", restart_countdown);
+        restart_label = lv_label_create(lv_scr_act());
+        lv_obj_set_style_text_font(restart_label, &lv_font_montserrat_24, 0);
+        lv_label_set_text(restart_label, buf);
+        lv_obj_center(restart_label);
     }
 }
 
@@ -1508,5 +1504,16 @@ static void playBeep(int frequency, int duration) {
         uint8_t m5_volume = map(volume_level, 25, 100, VOLUME_MIN, VOLUME_MAX);
         M5.Speaker.setVolume(m5_volume);
         M5.Speaker.tone(frequency, duration);
+    }
+}
+
+static void restart_timer_cb(lv_timer_t *timer) {
+    restart_countdown--;
+    if (restart_countdown > 0) {
+        char buf[64];
+        snprintf(buf, sizeof(buf), "Restarting in %d...", restart_countdown);
+        lv_label_set_text(restart_label, buf);
+    } else {
+        ESP.restart();  // Restart the device
     }
 }

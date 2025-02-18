@@ -1,13 +1,13 @@
-
 // Last updated 2/17/25 11:01 PM
 
 #include "lv_conf.h"
 #include <Wire.h>
 #include <FastLED.h>
 #include <M5Unified.h>
-#include <M5GFX.h>
 #include <lvgl.h>
 #include <EEPROM.h>
+#include <M5GFX.h>
+LV_FONT_DECLARE(lv_font_unscii_16);
 
 // Pin Definitions
 #define KEY_PIN 8
@@ -526,30 +526,55 @@ static void handle_menu_selection(int item) {
             
         case 2:  // Emissivity
             if (!bar_active) {
-                // Create container for emissivity control
+                // Create a styled container for emissivity control
                 lv_obj_t *emissivity_cont = lv_obj_create(lv_scr_act());
-                lv_obj_set_size(emissivity_cont, 200, 100);
+                lv_obj_set_size(emissivity_cont, 280, 160);  // Larger container
                 lv_obj_align(emissivity_cont, LV_ALIGN_CENTER, 0, 0);
+                lv_obj_set_style_bg_color(emissivity_cont, lv_color_hex(0x303030), 0);
+                lv_obj_set_style_border_color(emissivity_cont, lv_color_hex(0x404040), 0);
+                lv_obj_set_style_border_width(emissivity_cont, 2, 0);
+                lv_obj_set_style_radius(emissivity_cont, 10, 0);  // Rounded corners
+                lv_obj_set_style_pad_all(emissivity_cont, 15, 0); // Inner padding
                 
-                // Create emissivity bar
+                // Title label
+                lv_obj_t *title_label = lv_label_create(emissivity_cont);
+                lv_label_set_text(title_label, "Emissivity Setting");
+                lv_obj_set_style_text_font(title_label, &lv_font_montserrat_16, 0);  // Larger font
+                lv_obj_align(title_label, LV_ALIGN_TOP_MID, 0, 0);
+                
+                // Create emissivity bar with styling
                 emissivity_bar = lv_bar_create(emissivity_cont);
-                lv_obj_set_size(emissivity_bar, 180, 20);
-                lv_obj_align(emissivity_bar, LV_ALIGN_TOP_MID, 0, 10);
+                lv_obj_set_size(emissivity_bar, 240, 20);
+                lv_obj_align(emissivity_bar, LV_ALIGN_CENTER, 0, 0);
                 lv_bar_set_range(emissivity_bar, 65, 100);  // Range 0.65 to 1.00
                 lv_bar_set_value(emissivity_bar, current_emissivity * 100, LV_ANIM_OFF);
                 
-                // Make the bar draggable
-                lv_obj_add_flag(emissivity_bar, LV_OBJ_FLAG_CLICKABLE);
-                lv_obj_add_event_cb(emissivity_bar, emissivity_slider_event_cb, LV_EVENT_PRESSED, NULL);
-                lv_obj_add_event_cb(emissivity_bar, emissivity_slider_event_cb, LV_EVENT_PRESSING, NULL);
-                lv_obj_add_event_cb(emissivity_bar, emissivity_slider_event_cb, LV_EVENT_RELEASED, NULL);
+                // Style the bar
+                lv_obj_set_style_bg_color(emissivity_bar, lv_color_hex(0x202020), LV_PART_MAIN);
+                lv_obj_set_style_bg_color(emissivity_bar, lv_color_hex(0x00E0FF), LV_PART_INDICATOR);
                 
-                // Create label for current value
+                // Range labels
+                lv_obj_t *min_label = lv_label_create(emissivity_cont);
+                lv_label_set_text(min_label, "0.65");
+                lv_obj_align_to(min_label, emissivity_bar, LV_ALIGN_OUT_LEFT_MID, -10, 0);
+                
+                lv_obj_t *max_label = lv_label_create(emissivity_cont);
+                lv_label_set_text(max_label, "1.00");
+                lv_obj_align_to(max_label, emissivity_bar, LV_ALIGN_OUT_RIGHT_MID, 10, 0);
+                
+                // Current value label with styling
                 emissivity_label = lv_label_create(emissivity_cont);
                 char buf[32];
-                snprintf(buf, sizeof(buf), "Emissivity: %.2f", current_emissivity);
+                snprintf(buf, sizeof(buf), "Current: %.2f", current_emissivity);
                 lv_label_set_text(emissivity_label, buf);
-                lv_obj_align(emissivity_label, LV_ALIGN_BOTTOM_MID, 0, -10);
+                lv_obj_set_style_text_font(emissivity_label, &lv_font_montserrat_16, 0);
+                lv_obj_align(emissivity_label, LV_ALIGN_CENTER, 0, 30);
+                
+                // Instructions with icons
+                lv_obj_t *instr_label = lv_label_create(emissivity_cont);
+                lv_label_set_text(instr_label, "BTN1: - | BTN2: + | KEY: OK");
+                lv_obj_set_style_text_font(instr_label, &lv_font_montserrat_14, 0);
+                lv_obj_align(instr_label, LV_ALIGN_BOTTOM_MID, 0, -5);
                 
                 bar_active = true;
             }
@@ -592,7 +617,24 @@ static void handle_menu_selection(int item) {
 
 static void handle_button_press(int pin) {
     if (bar_active) {
-        Serial.println("Button press ignored - bar is active");  // Debug print - state check
+        // Handle emissivity adjustment
+        if (pin == BUTTON1_PIN) {
+            // Decrease emissivity (minimum 0.65)
+            float new_emissivity = max(0.65f, current_emissivity - 0.01f);
+            lv_bar_set_value(emissivity_bar, new_emissivity * 100, LV_ANIM_OFF);
+            char buf[32];
+            snprintf(buf, sizeof(buf), "Current: %.2f", new_emissivity);
+            lv_label_set_text(emissivity_label, buf);
+            setEmissivity(new_emissivity);
+        } else if (pin == BUTTON2_PIN) {
+            // Increase emissivity (maximum 1.00)
+            float new_emissivity = min(1.00f, current_emissivity + 0.01f);
+            lv_bar_set_value(emissivity_bar, new_emissivity * 100, LV_ANIM_OFF);
+            char buf[32];
+            snprintf(buf, sizeof(buf), "Current: %.2f", new_emissivity);
+            lv_label_set_text(emissivity_label, buf);
+            setEmissivity(new_emissivity);
+        }
         return;
     }
     
@@ -700,7 +742,32 @@ float readEmissivity() {
         Serial.printf("Current sensor emissivity: %.3f (raw: 0x%04X)\n", actualEmissivity, currentEmissivity);
         return actualEmissivity;
     }
-    return 0.95f; // Default if read fails
+    return -1.0; // Error reading
+}
+
+// Function to set emissivity
+void setEmissivity(float value) {
+    if (value >= 0.1 && value <= 1.0) {
+        float currentEmissivity = readEmissivity();
+        if (currentEmissivity < 0) {
+            Serial.println("Error reading current emissivity");
+            return;
+        }
+        
+        // Set emissivity if different
+        uint16_t targetEmissivity = value * 65535;
+        uint16_t currentRaw = currentEmissivity * 65535;
+        
+        if (currentRaw != targetEmissivity) {
+            Wire.beginTransmission(MLX_I2C_ADDR);
+            Wire.write(0x24);
+            Wire.write(targetEmissivity & 0xFF);
+            Wire.write(targetEmissivity >> 8);
+            Wire.endTransmission();
+            Serial.printf("Setting emissivity to: %.3f (raw: 0x%04X)\n", value, targetEmissivity);
+            current_emissivity = value;  // Update the current value
+        }
+    }
 }
 
 TempReadings readTemperatures() {
@@ -802,38 +869,6 @@ TempReadings readTemperatures() {
     }
     
     return temps;
-}
-
-void setEmissivity(float value) {
-    if (value >= 0.1 && value <= 1.0) {
-        // Read current emissivity first
-        float currentEmissivity = readEmissivity();
-        
-        // Only update if different (accounting for floating point comparison)
-        if (abs(currentEmissivity - value) > 0.001) {
-            uint16_t targetEmissivity = value * 65535;
-            
-            Wire.beginTransmission(MLX_I2C_ADDR);
-            Wire.write(0x24);  // Emissivity register address
-            Wire.write(targetEmissivity & 0xFF);  // LSB
-            Wire.write(targetEmissivity >> 8);    // MSB
-            Wire.endTransmission();
-            
-            Serial.printf("Setting emissivity to: %.3f (raw: 0x%04X)\n", value, targetEmissivity);
-            
-            // Verify the change
-            delay(10);
-            float newEmissivity = readEmissivity();
-            if (abs(newEmissivity - value) <= 0.001) {
-                Serial.println("Emissivity update successful");
-                current_emissivity = value;
-            } else {
-                Serial.println("Emissivity update failed!");
-            }
-        } else {
-            Serial.println("Emissivity already at target value");
-        }
-    }
 }
 
 void my_disp_flush(lv_disp_drv_t *disp, const lv_area_t *area, lv_color_t *color_p) {
@@ -944,7 +979,7 @@ void setup() {
     temp_value_label = lv_label_create(temp_cont);
     lv_obj_set_style_text_font(temp_value_label, &lv_font_montserrat_24, 0);
     lv_obj_set_style_text_color(temp_value_label, lv_color_white(), 0);
-    lv_label_set_text(temp_value_label, "---°C");
+    lv_label_set_text(temp_value_label, "");
     lv_obj_align(temp_value_label, LV_ALIGN_CENTER, 0, 10);
     
     // Create trend indicator
@@ -1011,7 +1046,7 @@ void setup() {
     
     // Initialize LED
     FastLED.addLeds<WS2812, LED_PIN, GRB>(leds, NUM_LEDS);
-    FastLED.setBrightness(50);
+    FastLED.setBrightness(255);
     
     // Initialize buttons
     pinMode(BUTTON1_PIN, INPUT_PULLUP);
@@ -1062,25 +1097,45 @@ void loop() {
     }
     lastButton1State = button1State;
     
-    // Check KEY press (Select/Enter)
+    // Key handling
     bool keyState = digitalRead(KEY_PIN);
-    if (keyState == LOW && lastKeyState == HIGH) {
-        Serial.println("Key unit pressed");  // Debug print
-        
-        if (brightness_menu_active) {
-            Serial.println("Key press detected in brightness menu");  // Debug print
-            close_brightness_menu();
-        } else if (sound_menu_active) {  // Added sound menu handling
-            Serial.println("Key press detected in sound menu");  // Debug print
-            close_sound_menu();
-        } else if (menu_active) {
-            Serial.println("Key press detected in main menu");  // Debug print
-            handle_button_press(KEY_PIN);
-        } else {
-            Serial.println("Key press detected in main screen");  // Debug print
-            handle_button_press(KEY_PIN);
+    if (keyState != lastKeyState) {
+        if (keyState == LOW) {  // Key pressed
+            Serial.println("Key unit pressed");  // Debug print
+            
+            if (bar_active) {
+                Serial.println("Key press detected in emissivity menu");  // Debug print
+                // Close emissivity menu
+                lv_obj_t* parent = lv_obj_get_parent(emissivity_bar);
+                lv_obj_del(parent);
+                emissivity_bar = NULL;
+                emissivity_label = NULL;
+                bar_active = false;
+                menu_active = false;
+                if (sound_enabled) {
+                    playBeep(CONFIRM_BEEP_FREQ, BEEP_DURATION);
+                }
+                saveSettings();
+            } else if (brightness_menu_active) {
+                Serial.println("Key press detected in brightness menu");  // Debug print
+                close_brightness_menu();
+            } else if (sound_menu_active) {
+                Serial.println("Key press detected in sound menu");  // Debug print
+                close_sound_menu();
+            } else if (menu_active) {
+                Serial.println("Key press detected in main menu");  // Debug print
+                handle_button_press(KEY_PIN);
+            } else {
+                Serial.println("Key press detected in main screen");  // Debug print
+                showSettings = !showSettings;
+                if (showSettings) {
+                    create_settings_panel();
+                } else {
+                    lv_obj_add_flag(settings_panel, LV_OBJ_FLAG_HIDDEN);
+                }
+            }
+            delay(50); // Debounce
         }
-        delay(50); // Debounce
     }
     lastKeyState = keyState;
     
@@ -1127,8 +1182,8 @@ void loop() {
             }
 
             // Calculate trend
-            const char* trend_arrow = (objTemp > last_temp + 0.5) ? "↑" : 
-                                    (objTemp < last_temp - 0.5) ? "↓" : "→";
+            const char* trend_arrow = (objTemp > last_temp + 0.5) ? LV_SYMBOL_UP : 
+                                    (objTemp < last_temp - 0.5) ? LV_SYMBOL_DOWN : LV_SYMBOL_RIGHT;
             lv_label_set_text(trend_label, trend_arrow);
             
             // Update status
@@ -1316,7 +1371,7 @@ static void emissivity_slider_event_cb(lv_event_t *e) {
         
         // Update label
         char buf[32];
-        snprintf(buf, sizeof(buf), "Emissivity: %.2f", new_emissivity);
+        snprintf(buf, sizeof(buf), "Current: %.2f", new_emissivity);
         lv_label_set_text(emissivity_label, buf);
         
         // Update emissivity

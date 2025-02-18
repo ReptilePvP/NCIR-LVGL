@@ -1,3 +1,5 @@
+#include <Adafruit_MLX90614.h>
+
 // Last updated 2/18/25 5:26 AM
 
 #include "lv_conf.h"
@@ -75,6 +77,8 @@ static uint8_t current_brightness = 3;  // Default to 100%
 
 // LED Array
 CRGB leds[NUM_LEDS];
+
+Adafruit_MLX90614 mlx = Adafruit_MLX90614();
 
 // Display and LVGL objects
 static lv_obj_t *temp_label;
@@ -179,30 +183,38 @@ static bool restart_dialog_active = false;
 
 // Function to save settings to EEPROM
 void saveSettings() {
-    Serial.println("Saving settings to EEPROM...");  // Debug print
+    Serial.println("Saving settings to EEPROM...");
     
-    EEPROM.write(SETTINGS_VALID_ADDR, SETTINGS_VALID_VALUE);
+    // Save temperature unit
     EEPROM.write(TEMP_UNIT_ADDR, temp_in_celsius ? 1 : 0);
+    
+    // Save brightness
     EEPROM.write(BRIGHTNESS_ADDR, current_brightness);
+    
+    // Save gauge visibility
     EEPROM.write(GAUGE_VISIBLE_ADDR, showGauge ? 1 : 0);
     
-    // Save sound settings - new format
-    // High bit (0x80) = sound enabled flag
-    // Lower 7 bits = volume percentage (25-100)
+    // Save sound settings (high bit for enabled, lower 7 bits for volume)
     EEPROM.write(SOUND_SETTINGS_ADDR, (sound_enabled ? 0x80 : 0) | (volume_level & 0x7F));
     
-    // Save emissivity (as integer, multiply by 100 to preserve 2 decimal places)
-    uint16_t emissivity_int = current_emissivity * 100;
+    // Save emissivity using library's native format
+    uint16_t emissivity_int = round(current_emissivity * 65535);
     EEPROM.write(EMISSIVITY_ADDR, emissivity_int & 0xFF);
-    EEPROM.write(EMISSIVITY_ADDR + 1, emissivity_int >> 8);
+    EEPROM.write(EMISSIVITY_ADDR + 1, (emissivity_int >> 8) & 0xFF);
     
+    // Write validation byte last
+    EEPROM.write(SETTINGS_VALID_ADDR, SETTINGS_VALID_VALUE);
+    
+    // Commit changes
     EEPROM.commit();
-    Serial.println("Settings saved successfully");  // Debug print
+    
+    Serial.printf("Saved emissivity: %.3f (raw: 0x%04X)\n", 
+                 current_emissivity, emissivity_int);
 }
 
 // Function to load settings from EEPROM
 void loadSettings() {
-    Serial.println("Loading settings from EEPROM...");  // Debug print
+    Serial.println("Loading settings from EEPROM...");
     
     if (EEPROM.read(SETTINGS_VALID_ADDR) == SETTINGS_VALID_VALUE) {
         // Load existing settings
@@ -216,14 +228,11 @@ void loadSettings() {
         
         // Check if using old format (lower 2 bits only)
         if ((sound_byte & 0x7F) <= 0x03) {
-            // Convert old format to new and save it back
             volume_level = ((sound_byte & 0x03) * 25) + 25;
-            Serial.println("Converting old volume format to new format");  // Debug print
-            // Save in new format immediately
+            Serial.println("Converting old volume format to new format");
             EEPROM.write(SOUND_SETTINGS_ADDR, (sound_enabled ? 0x80 : 0) | (volume_level & 0x7F));
             EEPROM.commit();
         } else {
-            // Already in new format
             volume_level = sound_byte & 0x7F;
         }
         
@@ -231,41 +240,81 @@ void loadSettings() {
         if (volume_level < 25) volume_level = 25;
         if (volume_level > 100) volume_level = 100;
         
-        Serial.print("Volume level set to: ");  // Debug print
+        Serial.print("Volume level set to: ");
         Serial.println(volume_level);
         
-        // Load emissivity
+        // Load emissivity (using same scaling as sensor)
         uint16_t emissivity_int = EEPROM.read(EMISSIVITY_ADDR) | (EEPROM.read(EMISSIVITY_ADDR + 1) << 8);
-        current_emissivity = emissivity_int / 100.0f;
-        
-        // Ensure emissivity is within valid range
-        if (current_emissivity < 0.65f) current_emissivity = 0.65f;
-        if (current_emissivity > 1.0f) current_emissivity = 1.0f;
-        
-        // Apply emissivity
-        setEmissivity(current_emissivity);
-        
+        float loaded_emissivity = emissivity_int / 65535.0f;
+
+        Serial.printf("Loaded emissivity from EEPROM: %.3f (raw: 0x%04X)\n", 
+                     loaded_emissivity, emissivity_int);
+
+        // Read current sensor emissivity
+        float sensor_emissivity = mlx.readEmissivity();
+
+        if (sensor_emissivity > 0) {  // Valid reading from sensor
+            if (loaded_emissivity >= 0.65f && loaded_emissivity <= 1.0f) {
+                if (abs(sensor_emissivity - loaded_emissivity) > 0.01) {
+                    Serial.printf("Setting emissivity to saved value: %.3f\n", loaded_emissivity);
+                    setEmissivity(loaded_emissivity);
+                } else {
+                    Serial.println("Sensor already at correct emissivity");
+                    current_emissivity = sensor_emissivity;
+                }
+            } else {
+                Serial.println("Invalid emissivity in EEPROM, using sensor value");
+                current_emissivity = sensor_emissivity;
+            }
+        } else {
+            if (loaded_emissivity >= 0.65f && loaded_emissivity <= 1.0f) {
+                Serial.println("Using loaded emissivity value");
+                current_emissivity = loaded_emissivity;
+            } else {
+                Serial.println("Using default emissivity");
+                current_emissivity = 0.95f;
+            }
+            setEmissivity(current_emissivity);
+        }
+
         // Ensure brightness is within valid range
         if (current_brightness >= BRIGHTNESS_LEVELS) {
             current_brightness = BRIGHTNESS_LEVELS - 1;
         }
-        
+
         // Apply loaded settings
         M5.Lcd.setBrightness(map(brightness_values[current_brightness], 0, 100, 0, 255));
         
-        // Update temperature display scale based on loaded unit
         if (temp_in_celsius) {
             lv_meter_set_scale_range(meter, temp_scale, TEMP_MIN_C, TEMP_MAX_C, 270, 135);
         } else {
             lv_meter_set_scale_range(meter, temp_scale, TEMP_MIN_F, TEMP_MAX_F, 270, 135);
         }
         
-        // Update gauge visibility
         if (showGauge) {
             lv_obj_clear_flag(meter, LV_OBJ_FLAG_HIDDEN);
         } else {
             lv_obj_add_flag(meter, LV_OBJ_FLAG_HIDDEN);
         }
+    } else {
+        // Initialize with defaults
+        Serial.println("No valid settings found, using defaults");
+        
+        temp_in_celsius = true;
+        current_brightness = 3;
+        showGauge = true;
+        sound_enabled = true;
+        volume_level = 40;
+        current_emissivity = 0.95f;
+        
+        // Apply default settings
+        M5.Lcd.setBrightness(map(brightness_values[current_brightness], 0, 100, 0, 255));
+        lv_meter_set_scale_range(meter, temp_scale, TEMP_MIN_C, TEMP_MAX_C, 270, 135);
+        lv_obj_clear_flag(meter, LV_OBJ_FLAG_HIDDEN);
+        
+        setEmissivity(current_emissivity);
+        
+        saveSettings();
     }
 }
 
@@ -737,44 +786,28 @@ static lv_disp_drv_t disp_drv;
 
 // Function to read current emissivity from sensor
 float readEmissivity() {
-    Wire.beginTransmission(MLX_I2C_ADDR);
-    Wire.write(0x24);  // Emissivity register address
-    Wire.endTransmission(false);
-    Wire.requestFrom(MLX_I2C_ADDR, 2);
-    
-    if (Wire.available() == 2) {
-        uint8_t lsb = Wire.read();
-        uint8_t msb = Wire.read();
-        uint16_t currentEmissivity = (msb << 8) | lsb;
-        float actualEmissivity = currentEmissivity / 65535.0;
-        Serial.printf("Current sensor emissivity: %.3f (raw: 0x%04X)\n", actualEmissivity, currentEmissivity);
-        return actualEmissivity;
-    }
-    return -1.0; // Error reading
+    float emissivity = mlx.readEmissivity();
+    Serial.printf("Current sensor emissivity: %.3f\n", emissivity);
+    return emissivity;
 }
 
-// Function to set emissivity
 void setEmissivity(float value) {
-    if (value >= 0.1 && value <= 1.0) {
-        float currentEmissivity = readEmissivity();
-        if (currentEmissivity < 0) {
-            Serial.println("Error reading current emissivity");
-            return;
-        }
-        
-        // Set emissivity if different
-        uint16_t targetEmissivity = value * 65535;
-        uint16_t currentRaw = currentEmissivity * 65535;
-        
-        if (currentRaw != targetEmissivity) {
-            Wire.beginTransmission(MLX_I2C_ADDR);
-            Wire.write(0x24);
-            Wire.write(targetEmissivity & 0xFF);
-            Wire.write(targetEmissivity >> 8);
-            Wire.endTransmission();
-            Serial.printf("Setting emissivity to: %.3f (raw: 0x%04X)\n", value, targetEmissivity);
-            current_emissivity = value;  // Update the current value
-        }
+    if (value < 0.65f || value > 1.0f) {
+        Serial.printf("Invalid emissivity value: %.3f\n", value);
+        return;
+    }
+    
+    mlx.writeEmissivity(value);
+    delay(100); // Give time for the write to complete
+    
+    // Verify the write by reading back
+    float new_emissivity = mlx.readEmissivity();
+    if (abs(new_emissivity - value) <= 0.01) {
+        Serial.printf("Successfully set emissivity to: %.3f\n", value);
+        current_emissivity = value;
+    } else {
+        Serial.printf("Failed to set emissivity. Wanted: %.3f, Got: %.3f\n", 
+                     value, new_emissivity);
     }
 }
 
@@ -782,100 +815,22 @@ TempReadings readTemperatures() {
     TempReadings temps = {0, 0};
     static uint32_t lastDebugOutput = 0;
     bool printDebug = (millis() - lastDebugOutput) >= DEBUG_INTERVAL;
-    
-    // Check if sensor is responding
-    Wire.beginTransmission(MLX_I2C_ADDR);
-    if (Wire.endTransmission() != 0) {
-        if (printDebug) {
-            Serial.println("MLX90614 not responding");
-            lastDebugOutput = millis();
-        }
-        return temps;
-    }
-    
-    // Read ambient temperature
-    Wire.beginTransmission(MLX_I2C_ADDR);
-    Wire.write(0x06);
-    if (Wire.endTransmission(false) != 0) {
-        if (printDebug) {
-            Serial.println("Failed to write ambient command");
-            lastDebugOutput = millis();
-        }
-        return temps;
-    }
-    
-    Wire.requestFrom(MLX_I2C_ADDR, 3);  // Request 3 bytes (2 data + 1 PEC)
-    if (Wire.available() >= 2) {
-        uint16_t ambient_raw = Wire.read() | (Wire.read() << 8);
-        Wire.read();  // Read PEC byte
-        
-        // Check if temperature is valid (not 0 or 0xFFFF)
-        if (ambient_raw != 0 && ambient_raw != 0xFFFF) {
-            temps.ambient = ambient_raw * 0.02 - 273.15;
-            if (printDebug) {
-                float ambient_f = temps.ambient * 9.0/5.0 + 32.0;
-                Serial.print("Ambient Raw: 0x"); Serial.print(ambient_raw, HEX);
-                Serial.print(" ("); Serial.print(ambient_raw); Serial.print(")");
-                Serial.print(" Ambient Temp: "); Serial.print(ambient_f, 1); Serial.println("°F");
-            }
-        } else {
-            if (printDebug) {
-                Serial.println("Invalid ambient reading");
-            }
-            return temps;
-        }
-    } else {
-        if (printDebug) {
-            Serial.println("Failed to read ambient temperature");
-            lastDebugOutput = millis();
-        }
-        return temps;
-    }
-    
-    delay(10); // Short delay between reads
-    
-    // Read object temperature
-    Wire.beginTransmission(MLX_I2C_ADDR);
-    Wire.write(0x07);
-    if (Wire.endTransmission(false) != 0) {
-        if (printDebug) {
-            Serial.println("Failed to write object command");
-            lastDebugOutput = millis();
-        }
-        return temps;
-    }
-    
-    Wire.requestFrom(MLX_I2C_ADDR, 3);  // Request 3 bytes (2 data + 1 PEC)
-    if (Wire.available() >= 2) {
-        uint16_t object_raw = Wire.read() | (Wire.read() << 8);
-        Wire.read();  // Read PEC byte
-        
-        // Check if temperature is valid (not 0 or 0xFFFF)
-        if (object_raw != 0 && object_raw != 0xFFFF) {
-            temps.object = object_raw * 0.02 - 273.15;
-            if (printDebug) {
-                float object_f = temps.object * 9.0/5.0 + 32.0;
-                Serial.print("Object Raw: 0x"); Serial.print(object_raw, HEX);
-                Serial.print(" ("); Serial.print(object_raw); Serial.print(")");
-                Serial.print(" Object Temp: "); Serial.print(object_f, 1); Serial.println("°F");
-                lastDebugOutput = millis();
-            }
-        } else {
-            if (printDebug) {
-                Serial.println("Invalid object reading");
-            }
-        }
-    } else {
-        if (printDebug) {
-            Serial.println("Failed to read object temperature");
-            lastDebugOutput = millis();
-        }
-    }
-    
+
+    // Read temperatures using the Adafruit library
+    temps.ambient = mlx.readAmbientTempC();
+    temps.object = mlx.readObjectTempC();
+
     if (printDebug) {
+        // Convert to Fahrenheit for debug output
+        float ambient_f = temps.ambient * 9.0/5.0 + 32.0;
+        float object_f = temps.object * 9.0/5.0 + 32.0;
+
+        Serial.printf("Ambient: %.1f°C (%.1f°F)\n", temps.ambient, ambient_f);
+        Serial.printf("Object: %.1f°C (%.1f°F)\n", temps.object, object_f);
         Serial.println("----------------------------------------");
+        lastDebugOutput = millis();
     }
-    
+
     return temps;
 }
 
@@ -904,32 +859,44 @@ void setup() {
     cfg.internal_rtc = false;
     M5.begin(cfg);
 
+    // Initialize MLX90614 with specific I2C pins
+    Wire.begin(2, 1);  // SDA=2, SCL=1
+    if (!mlx.begin()) {
+        Serial.println("Error connecting to MLX sensor. Check wiring.");
+        while (1);
+    }
+    Serial.println("MLX90614 found!");
+
+    // Read initial emissivity
+    float initial_emissivity = mlx.readEmissivity();
+    Serial.printf("Initial sensor emissivity: %.3f\n", initial_emissivity);
+
+    
     // Initialize Power Manager
     M5.Power.begin();
     M5.Power.setChargeCurrent(1000);
-
-    // Initialize I2C for MLX90614
-    Wire.begin(2, 1);
-    Wire.setClock(100000);
-    
-    // Check if MLX90614 is responding
-    Wire.beginTransmission(MLX_I2C_ADDR);
-    if (Wire.endTransmission() != 0) {
-        Serial.println("MLX90614 not found! Check wiring");
-    } else {
-        Serial.println("MLX90614 found!");
-        // Read current emissivity
-        float sensorEmissivity = readEmissivity();
-        Serial.printf("Initial sensor emissivity: %.3f\n", sensorEmissivity);
-    }
     
     // Initialize display
     M5.Lcd.begin();
     M5.Lcd.setRotation(1);
     M5.Lcd.setBrightness(255);
     M5.Lcd.fillScreen(TFT_BLACK);
-    
     Serial.println("Display initialized");
+    
+    // Initialize EEPROM
+    EEPROM.begin(EEPROM_SIZE);
+    
+    // Check sensor
+    Wire.beginTransmission(MLX_I2C_ADDR);
+    if (Wire.endTransmission() == 0) {
+        Serial.println("MLX90614 found!");
+        float initial_emissivity = readEmissivity();
+        if (initial_emissivity > 0) {
+            Serial.printf("Initial sensor emissivity: %.3f\n", initial_emissivity);
+        }
+    } else {
+        Serial.println("MLX90614 not found!");
+    }
     
     // Initialize LVGL
     lv_init();
@@ -944,9 +911,6 @@ void setup() {
     disp_drv.flush_cb = my_disp_flush;
     disp_drv.draw_buf = &draw_buf;
     lv_disp_drv_register(&disp_drv);
-    
-    // Initialize EEPROM
-    EEPROM.begin(EEPROM_SIZE);
     
     // Create styles
     lv_style_init(&style_text);
@@ -1066,8 +1030,8 @@ void setup() {
     
     Serial.println("Setup completed!");
     lastLvglTick = millis();
-    
-    // Load settings after display initialization
+
+    //load settings
     loadSettings();
     
     // Initial LED color

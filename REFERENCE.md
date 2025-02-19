@@ -1,5 +1,4 @@
-
-// Last updated 2/18/25 5:26 AM
+// Last updated 2/18/25 2:22 PM
 
 # M5Stack Temperature Monitor Reference Guide
 
@@ -58,7 +57,6 @@ static uint8_t brightness_values[4] = {25, 50, 75, 100};  // Percentage values
 static const char* brightness_labels[4] = {"25%", "50%", "75%", "100%"};
 ```
 
-## EEPROM Storage
 
 ### Addresses
 ```cpp
@@ -318,3 +316,78 @@ static lv_obj_t *restart_msgbox = NULL;
 - Celsius: °C
 - Fahrenheit: °F
 - Update Interval: Every loop
+
+## M5Stack Temperature Monitor Reference
+
+### Hardware Requirements
+- M5Stack CoreS3 (Main unit)
+- M5Stack Dual Button Unit
+- M5Stack Key Unit
+- M5Stack NCIR Unit (MLX90614)
+
+### Features
+- Non-contact temperature measurement
+- Adjustable emissivity (0.65-1.00)
+- Temperature display in Fahrenheit/Celsius
+- Adjustable display brightness
+- Optional temperature gauge display
+- Sound feedback with adjustable volume
+- Persistent settings storage
+
+### Default Settings
+- Temperature Unit: Fahrenheit
+- Emissivity: 0.95
+- Brightness Level: 5 (50%)
+- Gauge Display: Enabled
+- Sound: Enabled
+- Volume: 40%
+
+### Settings Management
+All settings are automatically saved to persistent storage and restored on device restart. Settings include:
+- Emissivity value
+- Temperature unit preference
+- Display brightness
+- Gauge visibility
+- Sound settings
+- Volume level
+
+### Controls
+#### Main Screen
+- Left Button: Enter/Exit Menu
+- Right Button: Toggle Gauge Display
+
+#### Menu Navigation
+- Left Button: Move Selection
+- Right Button: Select/Adjust Value
+
+#### Settings Adjustment
+- Emissivity: 0.01 increments (0.65-1.00)
+- Brightness: 10 levels (0-100%)
+- Volume: 10 levels (0-100%)
+
+### Error Handling
+The device includes comprehensive error handling for:
+- Sensor communication issues
+- Settings storage/loading
+- Invalid value ranges
+
+### Debug Information
+Debug messages are output via Serial at 115200 baud, including:
+- Temperature readings
+- Settings changes
+- Error conditions
+- Device state changes
+
+### Dependencies
+- M5Unified
+- Wire.h
+- FastLED
+- LVGL 8.4.0
+- Preferences
+- Adafruit_MLX90614
+
+### Technical Specifications
+- Temperature Range: -70°C to 380°C (-94°F to 716°F)
+- Emissivity Range: 0.65-1.00
+- Display Resolution: 320x240
+- Settings Storage: ESP32 NVS (Non-volatile Storage)

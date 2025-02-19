@@ -1,168 +1,58 @@
+// Last updated 2/18/25 2:22 PM
 
-// Last updated 2/18/25 5:26 AM
+# M5Stack Temperature Monitor
 
-# M5Stack Temperature Monitoring Device
-
-A sophisticated temperature monitoring system built on the M5Stack CoreS3 platform, featuring an interactive LVGL interface, customizable sensor settings, and real-time temperature display.
+A non-contact temperature monitoring solution using M5Stack CoreS3 and MLX90614 infrared sensor.
 
 ## Features
 
-- Real-time temperature monitoring using MLX90614 infrared sensor
-- Beautiful LVGL-based graphical interface
-- Interactive touch controls
-- Configurable temperature units (Celsius/Fahrenheit)
-- Adjustable screen brightness with 4 levels (25%, 50%, 75%, 100%)
-- Customizable gauge display
-- Advanced sound feedback system
-  - Fine-grained volume control (5% steps)
-  - Volume range from 25% to 100%
-  - Distinct tones for different actions
-  - Enable/Disable option
+- Non-contact temperature measurement using MLX90614 sensor
+- Configurable temperature display (Fahrenheit/Celsius)
+- Adjustable emissivity for different materials (0.65-1.00)
+- Interactive UI with LVGL
+- Visual temperature gauge
+- Adjustable display brightness
+- Sound feedback with volume control
 - Persistent settings storage
-- Comprehensive debug logging system
 
 ## Hardware Requirements
 
-### Core Components
-- M5Stack CoreS3 (main board)
-- M5Stack NCIR Unit (MLX90614 temperature sensor)
+- M5Stack CoreS3
 - M5Stack Dual Button Unit
 - M5Stack Key Unit
-
-### Pin Configuration
-| Component | Pin(s) | Function |
-|-----------|--------|-----------|
-| Temperature Sensor | 2, 1 | I2C Communication |
-| Button1 | 17 | Menu Navigation/Temperature Toggle |
-| Button2 | 18 | Menu Navigation |
-| Key Unit | 8 | Menu Selection/Gauge Toggle |
+- M5Stack NCIR Unit (MLX90614)
 
 ## Software Requirements
 
-### Dependencies
 - Arduino IDE
-- M5Unified library
-- M5GFX library
-- LVGL 8.4.0
-- Wire.h (for I2C)
-- FastLED (for RGB LED control)
-- EEPROM (for settings storage)
+- Required Libraries:
+  - M5Unified
+  - Wire.h
+  - FastLED
+  - LVGL 8.4.0
+  - Preferences
+  - Adafruit_MLX90614
 
-### Installation
+## Installation
 
 1. Install Arduino IDE
-2. Install required libraries through Arduino Library Manager:
-   - M5Unified
-   - M5GFX
-   - LVGL
-   - FastLED
-3. Clone this repository
-### Development Features
-
-- Comprehensive debug logging system
-  - Function entry/exit tracking
-  - State change monitoring
-  - Value updates logging
-  - Error condition detection
-- Persistent settings storage
-  - Temperature unit preference
-  - Screen brightness (25%, 50%, 75%, 100%)
-  - Gauge visibility
-  - Sound settings (On/Off and volume level)
-  - Emissivity value
-- Menu system
-  - Interactive settings menu
-  - Sound feedback
-  - Visual feedback
-  - State persistence
-4. Open `lvglex.ino` in Arduino IDE
-5. Select "M5Stack CoreS3" as your board
-6. Upload the code
+2. Install required libraries through Arduino Library Manager
+3. Connect M5Stack hardware components
+4. Upload firmware to M5Stack CoreS3
 
 ## Usage
 
-### Main Interface
-- Temperature is displayed both numerically and on a gauge
-- Current sensor settings and status are shown on screen
-- Touch interface for menu navigation and settings adjustment
+- Left Button: Enter/Exit Menu
+- Right Button: Toggle Gauge Display
+- In Menu:
+  - Left Button: Navigate
+  - Right Button: Select/Adjust
 
-### Controls
-- **Button1**: Navigate up in menus / Toggle temperature unit
-- **Button2**: Navigate down in menus
-- **Key Unit**: Select menu items / Toggle gauge visibility
-- **Touch Screen**: Interactive settings adjustment
+## Documentation
 
-### Settings Menu
-1. **Temperature Unit**: Switch between Celsius and Fahrenheit
-2. **Brightness**: Adjust screen brightness
-3. **Gauge Visibility**: Toggle temperature gauge display
-4. **Sound Settings**: 
-   - Enable/disable sound feedback
-   - Adjust volume (25%, 50%, 75%, 100%)
-5. **Emissivity**: Adjust sensor emissivity value
-6. **Reset**: Reset to default settings
-
-### Sound Feedback
-- Different tones for menu navigation
-- Confirmation sounds for selections
-- Adjustable volume levels
-- Can be disabled completely
-
-## Project Structure
-
-- `lvglex.ino`: Main application code
-- `lv_conf.h`: LVGL configuration
-- `CHANGELOG.md`: Project change history
-- `README.md`: This documentation
-
-## Settings Storage
-
-The following settings are automatically saved to EEPROM:
-- Temperature unit preference
-- Screen brightness level
-- Gauge visibility state
-- Sound settings (enabled/disabled and volume)
-- Emissivity value
-
-## Contributing
-
-1. Fork the repository
-2. Create a feature branch
-3. Commit your changes
-4. Push to the branch
-5. Create a Pull Request
-
-## Development Notes
-
-### Adding New Features
-- Use LVGL 8.4.0 widgets for UI elements
-- Follow existing code structure for consistency
-- Update EEPROM handling if adding new settings
-- Add appropriate sound feedback for new interactions
-
-### Debugging Tips
-- Enable Serial debugging for development
-- Use M5.Display for debug information
-- Check EEPROM addresses for settings conflicts
-- Verify I2C communication if sensor issues occur
+- See [REFERENCE.md](REFERENCE.md) for detailed documentation
+- Check [CHANGELOG.md](CHANGELOG.md) for version history
 
 ## License
 
-This project is open source and available under the MIT License.
-
-## Acknowledgments
-
-- M5Stack for the excellent hardware platform
-- LVGL team for the graphics library
-- Contributors and testers
-
-## Version History
-
-See [CHANGELOG.md](CHANGELOG.md) for a detailed history of changes.
-
-## Support
-
-For issues, questions, or contributions, please:
-1. Check existing issues in the repository
-2. Create a new issue with a detailed description
-3. Include your hardware configuration and Arduino IDE version
+This project is licensed under the MIT License - see the LICENSE file for details.

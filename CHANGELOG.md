@@ -4,7 +4,7 @@ All notable changes to the M5Stack Temperature Monitoring Device project will be
 
 ## [Unreleased]
 
-// Last updated 2/18/25 5:26 AM
+// Last updated 2/18/25 2:22 PM
 
 ### Added
 - Enhanced debug logging system throughout the application
@@ -32,6 +32,22 @@ All notable changes to the M5Stack Temperature Monitoring Device project will be
 - Brightness control sound feedback
 - Menu state handling edge cases
 - Debug message consistency
+
+## [2025-02-18]
+
+### Changed
+- Improved settings persistence using Preferences library
+- Changed default temperature unit to Fahrenheit
+- Enhanced settings save/load functionality with better error handling
+- Added comprehensive debug logging for settings operations
+- Fixed settings synchronization between memory and storage
+- Improved gauge visibility and temperature scale updates
+
+### Fixed
+- Settings persistence issues across device restarts
+- Temperature unit conversion consistency
+- Settings initialization with correct default values
+- Emissivity value persistence
 
 ## [1.0.0] - 2025-02-16
 

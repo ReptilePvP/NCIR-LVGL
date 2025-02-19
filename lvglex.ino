@@ -1,4 +1,4 @@
-// Last updated 2/18/25 5:26 AM
+// Last updated 2/18/25 2:22 PM
 
 #include "lv_conf.h"
 #include <Adafruit_MLX90614.h>
@@ -61,13 +61,18 @@ struct Settings {
     float emissivity = 0.95f;  // Default emissivity
     bool temp_in_celsius = false;
     uint8_t brightness = 5;
-    bool show_gauge = false;
+    bool show_gauge = false;  // Changed default to false
     bool sound_enabled = true;
     uint8_t volume = 40;
     
     void save() {
         Preferences prefs;
         prefs.begin("settings", false);  // false = RW mode
+        
+        // Clear preferences first to ensure clean state
+        prefs.clear();
+        
+        // Save all settings
         prefs.putFloat("emissivity", emissivity);
         prefs.putBool("celsius", temp_in_celsius);
         prefs.putUChar("brightness", brightness);
@@ -75,20 +80,25 @@ struct Settings {
         prefs.putBool("sound_en", sound_enabled);
         prefs.putUChar("volume", volume);
         prefs.end();
-        Serial.printf("Saved settings - Emissivity: %.3f\n", emissivity);
+        Serial.printf("Saved settings - Emissivity: %.3f, Celsius: %d, Gauge: %d\n", 
+                     emissivity, temp_in_celsius, show_gauge);
     }
     
     void load() {
         Preferences prefs;
         prefs.begin("settings", true);  // true = read-only mode
+        
+        // Load all settings with correct defaults matching struct
         emissivity = prefs.getFloat("emissivity", 0.95f);
-        temp_in_celsius = prefs.getBool("celsius", true);
-        brightness = prefs.getUChar("brightness", 3);
-        show_gauge = prefs.getBool("gauge", true);
+        temp_in_celsius = prefs.getBool("celsius", false);  // Default to Fahrenheit
+        brightness = prefs.getUChar("brightness", 5);
+        show_gauge = prefs.getBool("gauge", false);  // Default to not showing gauge
         sound_enabled = prefs.getBool("sound_en", true);
         volume = prefs.getUChar("volume", 40);
         prefs.end();
-        Serial.printf("Loaded settings - Emissivity: %.3f\n", emissivity);
+        
+        Serial.printf("Loaded settings - Emissivity: %.3f, Celsius: %d, Gauge: %d\n", 
+                     emissivity, temp_in_celsius, show_gauge);
     }
 } settings;
 
@@ -127,16 +137,16 @@ static lv_obj_t *timestamp_label = NULL;  // For last reading time
 static float last_temp = 0;               // For trend calculation
 
 // State variables
-static bool showGauge = true;      // Track gauge visibility
+static bool showGauge = false;      // Track gauge visibility
 static bool lastKeyState = HIGH;    // Track key state for toggle
 static bool lastButton1State = HIGH;
 static bool lastButton2State = HIGH;
 static bool showSettings = false;
 static int selected_menu_item = 0;
 static bool menu_active = false;
-static bool temp_in_celsius = true;  // Moved here to global scope
+static bool temp_in_celsius = false;  // Moved here to global scope
 static float current_emissivity = 0.95f;  // Default emissivity
-static lv_obj_t *emissivity_bar = NULL;
+static lv_obj_t *emissivity_slider = NULL;
 static lv_obj_t *emissivity_label = NULL;
 static bool bar_active = false;
 static bool brightness_menu_active = false;
@@ -211,10 +221,11 @@ void saveSettings() {
     settings.emissivity = current_emissivity;
     settings.temp_in_celsius = temp_in_celsius;
     settings.brightness = current_brightness;
-    settings.show_gauge = showGauge;
+    settings.show_gauge = showGauge;  // Save current gauge state
     settings.sound_enabled = sound_enabled;
     settings.volume = volume_level;
     settings.save();
+    Serial.printf("Saved showGauge: %d\n", showGauge);  // Debug print
 }
 
 // Function to load settings
@@ -226,7 +237,7 @@ void loadSettings() {
     current_emissivity = settings.emissivity;
     temp_in_celsius = settings.temp_in_celsius;
     current_brightness = settings.brightness;
-    showGauge = settings.show_gauge;
+    showGauge = settings.show_gauge;  // Load gauge state
     sound_enabled = settings.sound_enabled;
     volume_level = settings.volume;
     
@@ -235,16 +246,23 @@ void loadSettings() {
     
     // Apply other settings
     M5.Lcd.setBrightness(map(brightness_values[current_brightness], 0, 100, 0, 255));
+    
+    // Update temperature display scale
     if (temp_in_celsius) {
         lv_meter_set_scale_range(meter, temp_scale, TEMP_MIN_C, TEMP_MAX_C, 270, 135);
     } else {
         lv_meter_set_scale_range(meter, temp_scale, TEMP_MIN_F, TEMP_MAX_F, 270, 135);
     }
+    
+    // Update gauge visibility based on loaded setting
     if (showGauge) {
         lv_obj_clear_flag(meter, LV_OBJ_FLAG_HIDDEN);
     } else {
         lv_obj_add_flag(meter, LV_OBJ_FLAG_HIDDEN);
     }
+    
+    Serial.printf("Loaded showGauge: %d\n", showGauge);  // Debug print
+    Serial.println("Settings applied successfully");
 }
 
 static lv_obj_t *brightness_dialog = NULL;
@@ -508,56 +526,7 @@ static void handle_menu_selection(int item) {
             
         case 2:  // Emissivity
             if (!bar_active) {
-                // Create a styled container for emissivity control
-                lv_obj_t *emissivity_cont = lv_obj_create(lv_scr_act());
-                lv_obj_set_size(emissivity_cont, 280, 160);  // Larger container
-                lv_obj_align(emissivity_cont, LV_ALIGN_CENTER, 0, 0);
-                lv_obj_set_style_bg_color(emissivity_cont, lv_color_hex(0x303030), 0);
-                lv_obj_set_style_border_color(emissivity_cont, lv_color_hex(0x404040), 0);
-                lv_obj_set_style_border_width(emissivity_cont, 2, 0);
-                lv_obj_set_style_radius(emissivity_cont, 10, 0);  // Rounded corners
-                lv_obj_set_style_pad_all(emissivity_cont, 15, 0); // Inner padding
-                
-                // Title label
-                lv_obj_t *title_label = lv_label_create(emissivity_cont);
-                lv_label_set_text(title_label, "Emissivity Setting");
-                lv_obj_set_style_text_font(title_label, &lv_font_montserrat_16, 0);  // Larger font
-                lv_obj_align(title_label, LV_ALIGN_TOP_MID, 0, 0);
-                
-                // Create emissivity bar with styling
-                emissivity_bar = lv_bar_create(emissivity_cont);
-                lv_obj_set_size(emissivity_bar, 240, 20);
-                lv_obj_align(emissivity_bar, LV_ALIGN_CENTER, 0, 0);
-                lv_bar_set_range(emissivity_bar, 65, 100);  // Range 0.65 to 1.00
-                lv_bar_set_value(emissivity_bar, current_emissivity * 100, LV_ANIM_OFF);
-                
-                // Style the bar
-                lv_obj_set_style_bg_color(emissivity_bar, lv_color_hex(0x202020), LV_PART_MAIN);
-                lv_obj_set_style_bg_color(emissivity_bar, lv_color_hex(0x00E0FF), LV_PART_INDICATOR);
-                
-                // Range labels
-                lv_obj_t *min_label = lv_label_create(emissivity_cont);
-                lv_label_set_text(min_label, "0.65");
-                lv_obj_align_to(min_label, emissivity_bar, LV_ALIGN_OUT_LEFT_MID, -10, 0);
-                
-                lv_obj_t *max_label = lv_label_create(emissivity_cont);
-                lv_label_set_text(max_label, "1.00");
-                lv_obj_align_to(max_label, emissivity_bar, LV_ALIGN_OUT_RIGHT_MID, 10, 0);
-                
-                // Current value label with styling
-                emissivity_label = lv_label_create(emissivity_cont);
-                char buf[32];
-                snprintf(buf, sizeof(buf), "Current: %.2f", current_emissivity);
-                lv_label_set_text(emissivity_label, buf);
-                lv_obj_set_style_text_font(emissivity_label, &lv_font_montserrat_16, 0);
-                lv_obj_align(emissivity_label, LV_ALIGN_CENTER, 0, 30);
-                
-                // Instructions with icons
-                lv_obj_t *instr_label = lv_label_create(emissivity_cont);
-                lv_label_set_text(instr_label, "BTN1: - | BTN2: + | KEY: OK");
-                lv_obj_set_style_text_font(instr_label, &lv_font_montserrat_14, 0);
-                lv_obj_align(instr_label, LV_ALIGN_BOTTOM_MID, 0, -5);
-                
+                createEmissivityDialog();
                 bar_active = true;
             }
             break;
@@ -608,17 +577,17 @@ static void handle_button_press(int pin) {
         if (pin == BUTTON1_PIN) {
             // Decrease emissivity (minimum 0.65)
             float new_emissivity = max(0.65f, current_emissivity - 0.01f);
-            lv_bar_set_value(emissivity_bar, new_emissivity * 100, LV_ANIM_OFF);
+            lv_slider_set_value(emissivity_slider, new_emissivity * 100, LV_ANIM_OFF);
             char buf[32];
-            snprintf(buf, sizeof(buf), "Current: %.2f", new_emissivity);
+            snprintf(buf, sizeof(buf), "%.2f", new_emissivity);
             lv_label_set_text(emissivity_label, buf);
             current_emissivity = new_emissivity;
         } else if (pin == BUTTON2_PIN) {
             // Increase emissivity (maximum 1.00)
             float new_emissivity = min(1.00f, current_emissivity + 0.01f);
-            lv_bar_set_value(emissivity_bar, new_emissivity * 100, LV_ANIM_OFF);
+            lv_slider_set_value(emissivity_slider, new_emissivity * 100, LV_ANIM_OFF);
             char buf[32];
-            snprintf(buf, sizeof(buf), "Current: %.2f", new_emissivity);
+            snprintf(buf, sizeof(buf), "%.2f", new_emissivity);
             lv_label_set_text(emissivity_label, buf);
             current_emissivity = new_emissivity;
         }
@@ -738,16 +707,21 @@ void setEmissivity(float value) {
         if (abs(newEmissivity - value) <= 0.01) {
             Serial.println("Emissivity update successful");
             current_emissivity = value;
-            settings.emissivity = value;  // Update settings structure
-            settings.save();  // Save to Preferences
+            // Only save to settings if value is valid
+            if (value >= 0.65f && value <= 1.0f) {
+                settings.emissivity = value;
+                settings.save();
+                Serial.printf("Saved emissivity: %.3f to settings\n", value);
+            }
         } else {
             Serial.printf("Emissivity update may have failed. Wanted: %.3f, Got: %.3f\n", 
                         value, newEmissivity);
-            // Still update our tracking value if it changed
-            if (abs(newEmissivity - oldEmissivity) > 0.01) {
+            // Only update if the new value is valid
+            if (newEmissivity >= 0.65f && newEmissivity <= 1.0f) {
                 current_emissivity = newEmissivity;
-                settings.emissivity = newEmissivity;  // Update settings structure
-                settings.save();  // Save to Preferences
+                settings.emissivity = newEmissivity;
+                settings.save();
+                Serial.printf("Saved new emissivity: %.3f to settings\n", newEmissivity);
             }
         }
     } else {
@@ -758,14 +732,9 @@ void setEmissivity(float value) {
 TempReadings readTemperatures() {
     TempReadings readings;
     
-    // Read temperatures using appropriate function based on unit setting
-    if (temp_in_celsius) {
-        readings.ambient = mlx.readAmbientTempC();
-        readings.object = mlx.readObjectTempC();
-    } else {
-        readings.ambient = mlx.readAmbientTempF();
-        readings.object = mlx.readObjectTempF();
-    }
+    // Always read in Celsius for internal consistency
+    readings.ambient = mlx.readAmbientTempC();
+    readings.object = mlx.readObjectTempC();
     
     return readings;
 }
@@ -799,9 +768,6 @@ void setup() {
     M5.Power.begin();
     M5.Power.setChargeCurrent(1000);
 
-    // Load settings first
-    settings.load();
-    
     // Initialize MLX90614
     if (!mlx.begin()) {
         Serial.println("Error connecting to MLX sensor. Check wiring.");
@@ -809,18 +775,29 @@ void setup() {
     }
     Serial.println("MLX90614 found!");
     
-    // Read initial emissivity and compare with saved value
+    // Read initial emissivity from sensor
     float sensorEmissivity = mlx.readEmissivity();
-    Serial.printf("Initial sensor emissivity: %.3f, Saved emissivity: %.3f\n", 
-                 sensorEmissivity, settings.emissivity);
+    Serial.printf("Initial sensor emissivity: %.3f\n", sensorEmissivity);
     
-    // If saved emissivity is different from sensor, update sensor
-    if (abs(sensorEmissivity - settings.emissivity) > 0.01) {
-        Serial.println("Updating sensor with saved emissivity value");
-        setEmissivity(settings.emissivity);
+    // Load settings
+    settings.load();
+    
+    // Initialize emissivity
+    if (settings.emissivity >= 0.65f && settings.emissivity <= 1.0f) {
+        current_emissivity = settings.emissivity;
+        if (abs(current_emissivity - sensorEmissivity) > 0.01) {
+            mlx.writeEmissivity(current_emissivity);
+            delay(100); // Allow time for write
+        }
     } else {
-        current_emissivity = sensorEmissivity;
+        current_emissivity = 0.95f; // Use default if saved value is invalid
+        settings.emissivity = current_emissivity;
+        settings.save();
+        mlx.writeEmissivity(current_emissivity);
+        delay(100); // Allow time for write
     }
+    
+    Serial.printf("Using emissivity: %.3f\n", current_emissivity);
     
     // Initialize display
     M5.Lcd.begin();
@@ -1045,8 +1022,8 @@ void loop() {
         if (currentMillis - lastDebugOutput >= DEBUG_INTERVAL) {
             Serial.println("----------------------------------------");
             Serial.printf("Emissivity: %.3f\n", current_emissivity);
-            Serial.printf("Ambient: %.2f%c\n", temps.ambient, temp_in_celsius ? 'C' : 'F');
-            Serial.printf("Object: %.2f%c\n", temps.object, temp_in_celsius ? 'C' : 'F');
+            Serial.printf("Ambient: %.2f°C\n", temps.ambient);
+            Serial.printf("Object: %.2f°C\n", temps.object);
             Serial.println("----------------------------------------");
             lastDebugOutput = currentMillis;
         }
@@ -1118,9 +1095,9 @@ static void show_restart_confirmation() {
     lv_obj_set_style_bg_color(restart_cont, lv_color_hex(0x303030), 0);
     lv_obj_set_style_border_color(restart_cont, lv_color_hex(0x404040), 0);
     lv_obj_set_style_border_width(restart_cont, 2, 0);
-    lv_obj_set_style_radius(restart_cont, 10, 0);
-    lv_obj_set_style_pad_all(restart_cont, 15, 0);
-
+    lv_obj_set_style_radius(restart_cont, 10, 0);  // Rounded corners
+    lv_obj_set_style_pad_all(restart_cont, 15, 0); // Inner padding
+    
     // Title
     lv_obj_t *title = lv_label_create(restart_cont);
     lv_label_set_text(title, "Restart Required");
@@ -1153,9 +1130,9 @@ static void handle_restart_button(int pin) {
         // Revert emissivity change
         if (bar_active) {
             // Revert the bar and label to previous value
-            lv_bar_set_value(emissivity_bar, current_emissivity * 100, LV_ANIM_OFF);
+            lv_slider_set_value(emissivity_slider, current_emissivity * 100, LV_ANIM_OFF);
             char buf[32];
-            snprintf(buf, sizeof(buf), "Current: %.2f", current_emissivity);
+            snprintf(buf, sizeof(buf), "%.2f", current_emissivity);
             lv_label_set_text(emissivity_label, buf);
         }
         // Close dialog
@@ -1170,9 +1147,9 @@ static void handle_restart_button(int pin) {
         
         // Close emissivity menu if open
         if (bar_active) {
-            lv_obj_t* parent = lv_obj_get_parent(emissivity_bar);
+            lv_obj_t* parent = lv_obj_get_parent(emissivity_slider);
             lv_obj_del(parent);
-            emissivity_bar = NULL;
+            emissivity_slider = NULL;
             emissivity_label = NULL;
             bar_active = false;
             menu_active = false;
@@ -1347,11 +1324,16 @@ static void updateTemperatureDisplay(TempReadings temps) {
     // Update temperature display
     char tempStr[32];
     if (objTemp != 0) {  // Only update if we got a valid reading
-        snprintf(tempStr, sizeof(tempStr), "%d°%c", (int)round(objTemp), temp_in_celsius ? 'C' : 'F');
+        // Convert to Fahrenheit for display if needed
+        float displayTemp = temp_in_celsius ? objTemp : (objTemp * 9.0/5.0 + 32.0);
+        float displayAmbient = temp_in_celsius ? ambTemp : (ambTemp * 9.0/5.0 + 32.0);
+        
+        snprintf(tempStr, sizeof(tempStr), "%d°%c", (int)round(displayTemp), temp_in_celsius ? 'C' : 'F');
         lv_label_set_text(temp_value_label, tempStr);
         
-        // Update gauge
-        lv_meter_set_indicator_value(meter, temp_indic, objTemp);
+        // Update gauge - convert value and ranges if in Fahrenheit
+        float gauge_value = temp_in_celsius ? objTemp : (objTemp * 9.0/5.0 + 32.0);
+        lv_meter_set_indicator_value(meter, temp_indic, gauge_value);
         
         // Update arcs based on current temperature unit
         float min_temp = temp_in_celsius ? TEMP_MIN_C : TEMP_MIN_F;
@@ -1361,21 +1343,21 @@ static void updateTemperatureDisplay(TempReadings temps) {
         
         // Update arcs
         lv_meter_set_indicator_start_value(meter, temp_arc_low, min_temp);
-        lv_meter_set_indicator_end_value(meter, temp_arc_low, MIN(objTemp, low_temp));
+        lv_meter_set_indicator_end_value(meter, temp_arc_low, MIN(gauge_value, low_temp));
         
         lv_meter_set_indicator_start_value(meter, temp_arc_normal, low_temp);
-        lv_meter_set_indicator_end_value(meter, temp_arc_normal, MIN(objTemp, high_temp));
+        lv_meter_set_indicator_end_value(meter, temp_arc_normal, MIN(gauge_value, high_temp));
         
         lv_meter_set_indicator_start_value(meter, temp_arc_high, high_temp);
-        lv_meter_set_indicator_end_value(meter, temp_arc_high, MIN(objTemp, max_temp));
+        lv_meter_set_indicator_end_value(meter, temp_arc_high, MIN(gauge_value, max_temp));
 
-        // Calculate trend
+        // Calculate trend using Celsius values for consistency
         const char* trend_arrow = (objTemp > last_temp + 0.5) ? LV_SYMBOL_UP : 
                                 (objTemp < last_temp - 0.5) ? LV_SYMBOL_DOWN : LV_SYMBOL_RIGHT;
         lv_label_set_text(trend_label, trend_arrow);
         
-        // Update status - convert to F for consistent status checks if in Celsius
-        float temp_f = temp_in_celsius ? (objTemp * 9.0/5.0 + 32.0) : objTemp;
+        // Update status - convert to F for status checks
+        float temp_f = objTemp * 9.0/5.0 + 32.0;  // Always convert to F for status since thresholds are in F
         const char* status_text;
         lv_color_t status_color;
         
@@ -1402,15 +1384,107 @@ static void updateTemperatureDisplay(TempReadings temps) {
         // Update ambient temperature
         char ambient_buf[32];
         snprintf(ambient_buf, sizeof(ambient_buf), "Ambient: %d°%c", 
-                (int)round(ambTemp),
+                (int)round(displayAmbient),
                 temp_in_celsius ? 'C' : 'F');
         lv_label_set_text(ambient_label, ambient_buf);
         
-        last_temp = objTemp;
+        last_temp = objTemp;  // Store in Celsius for consistent trend calculation
     } else {
         Serial.println("Invalid temperature reading");
         lv_label_set_text(temp_value_label, "Error");
         lv_label_set_text(status_label, "ERROR");
         lv_obj_set_style_text_color(status_label, lv_color_hex(0xff0000), 0);
+    }
+}
+
+static void createEmissivityDialog() {
+    // Create a styled container for emissivity control
+    lv_obj_t *emissivity_cont = lv_obj_create(lv_scr_act());
+    lv_obj_set_size(emissivity_cont, 280, 160);  // Larger container
+    lv_obj_align(emissivity_cont, LV_ALIGN_CENTER, 0, 0);
+    lv_obj_set_style_bg_color(emissivity_cont, lv_color_hex(0x303030), 0);
+    lv_obj_set_style_border_color(emissivity_cont, lv_color_hex(0x404040), 0);
+    lv_obj_set_style_border_width(emissivity_cont, 2, 0);
+    lv_obj_set_style_radius(emissivity_cont, 10, 0);  // Rounded corners
+    lv_obj_set_style_pad_all(emissivity_cont, 15, 0); // Inner padding
+    
+    // Title label
+    lv_obj_t *title_label = lv_label_create(emissivity_cont);
+    lv_label_set_text(title_label, "Emissivity Setting");
+    lv_obj_set_style_text_font(title_label, &lv_font_montserrat_16, 0);  // Larger font
+    lv_obj_align(title_label, LV_ALIGN_TOP_MID, 0, 0);
+    
+    // Create slider with styling
+    emissivity_slider = lv_slider_create(emissivity_cont);
+    lv_obj_set_size(emissivity_slider, 240, 20);
+    lv_obj_align(emissivity_slider, LV_ALIGN_CENTER, 0, 0);
+    lv_slider_set_range(emissivity_slider, 65, 100);  // Range 0.65 to 1.00 (multiplied by 100)
+    lv_slider_set_value(emissivity_slider, current_emissivity * 100, LV_ANIM_OFF);
+    
+    // Style the slider
+    lv_obj_set_style_bg_color(emissivity_slider, lv_color_hex(0x202020), LV_PART_MAIN);
+    lv_obj_set_style_bg_color(emissivity_slider, lv_color_hex(0x00E0FF), LV_PART_INDICATOR);
+    
+    // Range labels
+    lv_obj_t *min_label = lv_label_create(emissivity_cont);
+    lv_label_set_text(min_label, "0.65");
+    lv_obj_align_to(min_label, emissivity_slider, LV_ALIGN_OUT_LEFT_MID, -10, 0);
+    
+    lv_obj_t *max_label = lv_label_create(emissivity_cont);
+    lv_label_set_text(max_label, "1.00");
+    lv_obj_align_to(max_label, emissivity_slider, LV_ALIGN_OUT_RIGHT_MID, 10, 0);
+    
+    // Current value label with styling
+    emissivity_label = lv_label_create(emissivity_cont);
+    lv_label_set_text_fmt(emissivity_label, "%.2f", current_emissivity);
+    lv_obj_set_style_text_font(emissivity_label, &lv_font_montserrat_16, 0);
+    lv_obj_align(emissivity_label, LV_ALIGN_CENTER, 0, 30);
+    
+    // Add event handler for slider
+    lv_obj_add_event_cb(emissivity_slider, emissivity_slider_event_cb, LV_EVENT_VALUE_CHANGED, NULL);
+    
+    bar_active = true;
+}
+
+static void emissivity_slider_event_cb(lv_event_t * e) {
+    lv_obj_t * slider = lv_event_get_target(e);
+    int32_t value = lv_slider_get_value(slider);
+    float new_emissivity = value / 100.0f;  // Convert slider value to emissivity
+    
+    // Update label and emissivity
+    lv_label_set_text_fmt(emissivity_label, "%.2f", new_emissivity);
+    current_emissivity = new_emissivity;
+    mlx.writeEmissivity(current_emissivity);
+    settings.emissivity = current_emissivity;
+    settings.save();
+}
+
+static void handleEmissivityButtons(uint8_t pin) {
+    if (bar_active) {
+        if (pin == BUTTON1_PIN) {
+            // Decrease emissivity
+            int32_t current_value = lv_slider_get_value(emissivity_slider);
+            if (current_value > 65) {  // 0.65 minimum
+                lv_slider_set_value(emissivity_slider, current_value - 1, LV_ANIM_OFF);
+                float new_emissivity = (current_value - 1) / 100.0f;
+                lv_label_set_text_fmt(emissivity_label, "%.2f", new_emissivity);
+                current_emissivity = new_emissivity;
+                mlx.writeEmissivity(current_emissivity);
+                settings.emissivity = current_emissivity;
+                settings.save();
+            }
+        } else if (pin == BUTTON2_PIN) {
+            // Increase emissivity
+            int32_t current_value = lv_slider_get_value(emissivity_slider);
+            if (current_value < 100) {  // 1.00 maximum
+                lv_slider_set_value(emissivity_slider, current_value + 1, LV_ANIM_OFF);
+                float new_emissivity = (current_value + 1) / 100.0f;
+                lv_label_set_text_fmt(emissivity_label, "%.2f", new_emissivity);
+                current_emissivity = new_emissivity;
+                mlx.writeEmissivity(current_emissivity);
+                settings.emissivity = current_emissivity;
+                settings.save();
+            }
+        }
     }
 }
